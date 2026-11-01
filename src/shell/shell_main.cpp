@@ -20,6 +20,7 @@
 
 #include "core/utf8.h"
 #include "engine/control_server.h"
+#include "shell/engine_discovery.h"
 #include "shell/process_launcher.h"
 #include "shell/supervisor.h"
 
@@ -193,10 +194,27 @@ void startWebView() {
 }
 
 void startEngineSupervision() {
-  g.token = bc::randomToken();
+  const auto discoveryFile = localAppData() / L"engine.json";
+  auto discovery = br::readDiscovery(discoveryFile);
+  if (!discovery && br::engineInstanceRunning()) {
+    // An engine started moments before this shell has not written its discovery
+    // file yet; wait for it instead of launching a second engine that would die
+    // on the engine's single-instance mutex.
+    discovery = br::waitForDiscovery(discoveryFile, std::chrono::seconds(3));
+  }
+  // A stale file can name a live process that is not our engine, so liveness is
+  // the pid-identity check, not the file's presence.
+  const bool engineAlive = discovery && br::isEngineProcess(discovery->pid);
+  if (engineAlive) {
+    g.port = discovery->port;
+    g.token = discovery->token;
+  } else {
+    g.token = bc::randomToken();
+  }
   g.launcher = std::make_unique<bc::ProcessLauncher>(
       g.exeDir / L"breadreplay-engine.exe",
       L"--port " + std::to_wstring(g.port) + L" --token " + bc::toWide(g.token));
+  if (engineAlive) g.launcher->adopt(discovery->pid);
   g.supervisor = std::make_unique<bc::Supervisor>(*g.launcher);
 
   g.ws.setUrl("ws://127.0.0.1:" + std::to_string(g.port) + "/?token=" + g.token);
