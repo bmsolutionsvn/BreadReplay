@@ -1,0 +1,527 @@
+#include "engine/engine.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstring>
+
+#include "core/timecode.h"
+#include "engine/adapter_factory.h"
+#include "engine/command_router.h"
+#include "engine/preview_encoder.h"
+#include "play/audio_follow.h"
+
+namespace br {
+namespace {
+constexpr int kPreviewWidth = 960;
+constexpr int kPreviewHeight = 540;
+constexpr int kAngleWidth = 240;
+
+std::string stateName(bc::SignalState s) {
+  switch (s) {
+    case bc::SignalState::Ready: return "ready";
+    case bc::SignalState::Connecting: return "connecting";
+    case bc::SignalState::Live: return "live";
+    default: return "offline";
+  }
+}
+
+int64_t freeBytesAt(const std::filesystem::path& p) {
+  ULARGE_INTEGER freeBytes{};
+  if (!GetDiskFreeSpaceExW(p.wstring().c_str(), &freeBytes, nullptr, nullptr)) return 0;
+  return static_cast<int64_t>(freeBytes.QuadPart);
+}
+
+nlohmann::json zoomJson(const ZoomRect& z) {
+  return {{"cx", z.cx}, {"cy", z.cy}, {"scale", z.scale}};
+}
+}  // namespace
+
+Engine::Engine(EngineDeps deps, Show show, std::filesystem::path folder)
+    : deps_(std::move(deps)), show_(std::move(show)), folder_(std::move(folder)) {
+  showJson_ = folder_ / "show.json";
+  show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
+                       static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
+  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  rebuildFrameSource();
+}
+
+Engine::~Engine() { stop(); }
+
+int64_t Engine::now() const { return deps_.clock ? deps_.clock() : nowUs(); }
+
+void Engine::Sink::onAudio(bc::AudioBlock a) {
+  if (auto* rec = engine.recorderFor(inputId)) rec->pushAudio(a.samples, a.channels, a.sampleRate);
+}
+
+void Engine::Sink::onState(bc::SignalState s, std::optional<bc::ErrorInfo>) {
+  std::lock_guard lock(engine.m_);
+  engine.inputStates_[inputId] = stateName(s);
+}
+
+void Engine::Sink::onCpuVideo(const bc::CpuVideoFrame& f) {
+  if (auto* rec = engine.recorderFor(inputId)) rec->pushVideo(f, engine.now());
+}
+
+void Engine::Sink::onCodedVideo(const bc::CodedVideoFrame& f) {
+  if (auto* rec = engine.recorderFor(inputId)) {
+    rec->pushCoded(engine.now(), std::vector<uint8_t>(f.data.begin(), f.data.end()));
+  }
+}
+
+Recorder* Engine::recorderFor(const std::string& id) {
+  auto it = recorders_.find(id);
+  return it == recorders_.end() ? nullptr : it->second.get();
+}
+
+InputStore* Engine::storeFor(const std::string& id) {
+  auto it = stores_.find(id);
+  return it == stores_.end() ? nullptr : it->second.get();
+}
+
+int64_t Engine::periodUs() const {
+  return static_cast<int64_t>(1'000'000.0 / show_.settings.rate.fps() + 0.5);
+}
+
+void Engine::start() {
+  if (started_) return;
+  started_ = true;
+  recording_ = true;
+  running_ = true;
+
+  buildInputs();
+  rebuildFrameSource();
+
+  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  renderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, show_.settings.outW,
+                                         show_.settings.outH);
+  previewRenderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, kPreviewWidth,
+                                                kPreviewHeight);
+  outputPlayer_ = std::make_unique<OutputPlayer>(*outputPlayerState_, *source_, *renderer_, show_.events,
+                                                 show_.settings);
+  buildOutputs();
+  outputPlayer_->start();
+  recordStart();
+
+  try {
+    previewEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+    outputEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+  } catch (const std::exception&) {
+    // no H.264 encoder: the UI still gets status and control, just no pictures
+  }
+  previewThread_ = std::thread([this] { previewLoop(); });
+  retentionThread_ = std::thread([this] { retentionLoop(); });
+  statusThread_ = std::thread([this] { statusLoop(); });
+}
+
+void Engine::stop() {
+  running_ = false;
+  if (previewThread_.joinable()) previewThread_.join();
+  if (retentionThread_.joinable()) retentionThread_.join();
+  if (statusThread_.joinable()) statusThread_.join();
+  recordStop();
+  if (outputPlayer_) outputPlayer_->stop();
+  previewEncoder_.reset();
+  outputEncoder_.reset();
+  outputPlayer_.reset();
+  previewPlayer_.reset();
+  outputPlayerState_.reset();
+  renderer_.reset();
+  previewRenderer_.reset();
+  source_.reset();
+  inputs_.clear();
+  sinks_.clear();
+  recorders_.clear();
+  stores_.clear();
+  inputStates_.clear();
+  fpsSamples_.clear();
+  fpsValues_.clear();
+  started_ = false;
+}
+
+void Engine::openShow(Show show, std::filesystem::path folder) {
+  const bool wasStarted = started_;
+  stop();
+  show_ = std::move(show);
+  folder_ = std::move(folder);
+  showJson_ = folder_ / "show.json";
+  show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
+                       static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
+  eventsVersionSent_ = 0;
+  (void)wasStarted;
+  start();
+}
+
+void Engine::buildInputs() {
+  bc::DefaultAdapterFactory factory(*deps_.gpu, *deps_.pool);
+  for (const auto& in : show_.inputs) {
+    if (stores_.count(in.id)) continue;
+    SegmentHeader header;
+    header.inputId = in.id;
+    header.width = show_.settings.outW;
+    header.height = show_.settings.outH;
+    header.rate = show_.settings.rate;
+    stores_[in.id] = std::make_unique<InputStore>(folder_ / in.id, header);
+    recorders_[in.id] = std::make_unique<Recorder>(*stores_[in.id], show_.settings.quality);
+    sinks_[in.id] = std::make_unique<Sink>(*this, in.id);
+    inputStates_[in.id] = "ready";
+    try {
+      inputs_[in.id] = deps_.makeInput ? deps_.makeInput(in.input) : factory.makeInput(in.input);
+    } catch (const std::exception& e) {
+      inputStates_[in.id] = "offline";
+      (void)e;
+    }
+  }
+}
+
+void Engine::buildOutputs() {
+  if (!outputPlayer_) return;
+  std::vector<std::unique_ptr<bc::Output>> outs;
+  bc::CameraConfig cam;
+  cam.name = show_.name;
+  bc::DefaultAdapterFactory factory(*deps_.gpu, *deps_.pool);
+  for (const auto& cfg : show_.outputs) {
+    if (!cfg.enabled) continue;
+    try {
+      outs.push_back(deps_.makeOutput ? deps_.makeOutput(cfg) : factory.makeOutput(cfg, cam, show_.settings.rate));
+    } catch (const std::exception&) {
+      // a bad output never takes the engine down
+    }
+  }
+  outputPlayer_->setOutputs(std::move(outs));
+}
+
+void Engine::rebuildFrameSource() {
+  std::map<std::string, const InputStore*> map;
+  for (const auto& [id, store] : stores_) map[id] = store.get();
+  source_ = std::make_unique<FrameSource>(std::move(map));
+}
+
+void Engine::recordStart() {
+  if (!started_) return;
+  for (auto& [id, input] : inputs_) {
+    if (!input) continue;
+    input->start(*sinks_[id]);
+  }
+  recording_ = true;
+}
+
+void Engine::recordStop() {
+  for (auto& [id, input] : inputs_) {
+    if (input) input->stop();
+  }
+  recording_ = false;
+}
+
+int64_t Engine::newestTs() const {
+  int64_t newest = 0;
+  for (const auto& [id, store] : stores_) newest = std::max(newest, store->newestTs());
+  return newest;
+}
+
+Player& Engine::playerFor(const std::string& which) {
+  if (which == "output" && outputPlayerState_) return *outputPlayerState_;
+  if (previewPlayer_) return *previewPlayer_;
+  static Player fallback(show_.events, show_.settings.rate, true);
+  return fallback;
+}
+
+void Engine::take() {
+  if (!previewPlayer_ || !outputPlayerState_) return;
+  outputPlayerState_->restore(previewPlayer_->state());
+  outputPlayerState_->play();
+}
+
+Preflight Engine::preflight() {
+  return br::preflight(folder_, static_cast<int>(show_.inputs.size()), 18.0);
+}
+
+void Engine::applySettings(const nlohmann::json& j) {
+  auto& s = show_.settings;
+  if (j.contains("rate")) {
+    if (const auto r = bc::parseShowRate(j.value("rate", std::string{}))) s.rate = *r;
+  }
+  if (j.contains("outW")) s.outW = j.value("outW", s.outW);
+  if (j.contains("outH")) s.outH = j.value("outH", s.outH);
+  if (j.contains("quality")) {
+    const auto q = j.value("quality", std::string("SQ"));
+    s.quality = q == "LQ" ? VmxQuality::LQ : (q == "HQ" ? VmxQuality::HQ : VmxQuality::SQ);
+  }
+  if (j.contains("lastNSeconds")) s.lastNSeconds = j.value("lastNSeconds", s.lastNSeconds);
+  if (j.contains("preRollS")) s.preRollS = j.value("preRollS", s.preRollS);
+  if (j.contains("postRollS")) s.postRollS = j.value("postRollS", s.postRollS);
+  if (j.contains("defaultSpeed")) s.defaultSpeed = j.value("defaultSpeed", s.defaultSpeed);
+  if (j.contains("transition")) s.transition = j.value("transition", s.transition);
+  if (j.contains("fadeS")) s.fadeS = j.value("fadeS", s.fadeS);
+  if (j.contains("lowSpaceMinutes")) s.lowSpaceMinutes = j.value("lowSpaceMinutes", s.lowSpaceMinutes);
+  if (j.contains("limit")) {
+    const auto& l = j["limit"];
+    s.limit.hours.reset();
+    s.limit.bytes.reset();
+    if (l.contains("hours")) s.limit.hours = l.value("hours", 0.0);
+    if (l.contains("bytes")) s.limit.bytes = l.value("bytes", int64_t{0});
+  }
+  if (j.contains("endAction")) s.endAction = j.value("endAction", s.endAction);
+  if (j.contains("slatePath")) s.slatePath = j.value("slatePath", s.slatePath);
+  if (j.contains("recordingFolder")) s.recordingFolder = j.value("recordingFolder", s.recordingFolder);
+  if (j.contains("hotkeys")) s.hotkeys = j.value("hotkeys", std::map<std::string, std::string>{});
+  show_.events.defaultSpeed = s.defaultSpeed;
+  show_.events.setRoll(static_cast<int64_t>(s.preRollS * 1'000'000),
+                       static_cast<int64_t>(s.postRollS * 1'000'000));
+}
+
+void Engine::addInput(const ShowInput& in) {
+  show_.inputs.push_back(in);
+  if (started_) {
+    buildInputs();
+    rebuildFrameSource();
+    if (recording_) recordStart();
+  }
+}
+
+void Engine::updateInput(const ShowInput& in) {
+  removeInput(in.id);
+  addInput(in);
+}
+
+void Engine::removeInput(const std::string& id) {
+  if (auto it = inputs_.find(id); it != inputs_.end() && it->second) it->second->stop();
+  inputs_.erase(id);
+  sinks_.erase(id);
+  recorders_.erase(id);
+  stores_.erase(id);
+  inputStates_.erase(id);
+  show_.inputs.erase(std::remove_if(show_.inputs.begin(), show_.inputs.end(),
+                                    [&](const ShowInput& i) { return i.id == id; }),
+                     show_.inputs.end());
+  if (started_) rebuildFrameSource();
+}
+
+void Engine::addOutput(const bc::OutputConfig& out) {
+  show_.outputs.push_back(out);
+  buildOutputs();
+}
+
+void Engine::updateOutput(const bc::OutputConfig& out) {
+  for (auto& o : show_.outputs) {
+    if (o.id == out.id) o = out;
+  }
+  buildOutputs();
+}
+
+void Engine::removeOutput(const std::string& id) {
+  show_.outputs.erase(std::remove_if(show_.outputs.begin(), show_.outputs.end(),
+                                     [&](const bc::OutputConfig& o) { return o.id == id; }),
+                      show_.outputs.end());
+  buildOutputs();
+}
+
+const InputStore* Engine::store(const std::string& id) const {
+  auto it = stores_.find(id);
+  return it == stores_.end() ? nullptr : it->second.get();
+}
+
+void Engine::saveShow() {
+  show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
+                       static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
+  br::saveShow(showJson_, show_);
+}
+
+void Engine::setSender(std::function<void(const std::string&)> text,
+                       std::function<void(const std::vector<uint8_t>&)> binary) {
+  sendText_ = std::move(text);
+  sendBinary_ = std::move(binary);
+}
+
+nlohmann::json Engine::statusJson() {
+  std::lock_guard lock(m_);
+  nlohmann::json j;
+  j["type"] = "status";
+  j["recording"] = recording_;
+  j["inputs"] = nlohmann::json::array();
+  const int64_t t = now();
+  for (const auto& in : show_.inputs) {
+    nlohmann::json ji;
+    ji["id"] = in.id;
+    ji["name"] = in.name;
+    ji["state"] = inputStates_.count(in.id) ? inputStates_[in.id] : "offline";
+    uint64_t frames = 0, dropped = 0;
+    int queued = 0;
+    if (auto it = recorders_.find(in.id); it != recorders_.end()) {
+      const auto s = it->second->stats();
+      frames = s.framesWritten;
+      dropped = s.dropped;
+      queued = s.queued;
+    }
+    auto& sample = fpsSamples_[in.id];
+    if (sample.first == 0) {
+      sample = {t, frames};
+    } else if (t - sample.first >= 1'000'000) {
+      fpsValues_[in.id] = static_cast<double>(frames - sample.second) * 1'000'000.0 /
+                          static_cast<double>(t - sample.first);
+      sample = {t, frames};
+    }
+    ji["fpsIn"] = fpsValues_.count(in.id) ? fpsValues_[in.id] : 0.0;
+    ji["dropped"] = dropped;
+    ji["queued"] = queued;
+    if (auto it = stores_.find(in.id); it != stores_.end()) {
+      ji["coverage"] = nlohmann::json::array();
+      for (const auto& r : it->second->coverage()) ji["coverage"].push_back({r.first, r.second});
+    }
+    j["inputs"].push_back(ji);
+  }
+  const int64_t freeB = freeBytesAt(folder_);
+  const double rate = writeMeter_.bytesPerSec(t);
+  j["disk"] = {{"freeBytes", freeB}, {"secondsLeft", br::secondsLeft(freeB, rate)}, {"writeMBps", rate / 1'000'000.0}};
+  j["alerts"] = alerts_;
+  auto playerJson = [&](Player& p) {
+    nlohmann::json jp;
+    jp["posUs"] = p.state().posUs;
+    jp["tc"] = formatTimecode(p.state().posUs, show_.settings.rate);
+    jp["eventId"] = p.state().eventId ? nlohmann::json(*p.state().eventId) : nlohmann::json(nullptr);
+    jp["angle"] = p.state().angle;
+    jp["playing"] = p.state().playing;
+    jp["speed"] = p.state().lever;
+    jp["locked"] = p.state().leverLocked;
+    jp["zoom"] = zoomJson(p.state().zoom);
+    return jp;
+  };
+  nlohmann::json players;
+  if (previewPlayer_) players["preview"] = playerJson(*previewPlayer_);
+  if (outputPlayerState_) {
+    players["output"] = playerJson(*outputPlayerState_);
+    const double rem = outputPlayerState_->remainingSeconds();
+    players["output"]["remainingS"] = std::isfinite(rem) ? nlohmann::json(rem) : nlohmann::json(nullptr);
+  }
+  j["players"] = players;
+  j["events"] = {{"version", show_.events.version()}};
+  return j;
+}
+
+void Engine::retentionTick() {
+  std::lock_guard lock(m_);
+  const int64_t t = now();
+  std::vector<StoredSegment> all;
+  for (const auto& [id, store] : stores_) {
+    for (const auto& info : store->segments()) all.push_back(StoredSegment{id, info, store->newestTs() == info.lastTs});
+  }
+  int64_t bytes = 0;
+  for (const auto& s : all) bytes += s.info.bytes;
+  writeMeter_.add(std::max<int64_t>(0, bytes - lastBytes_), t);
+  lastBytes_ = bytes;
+  const double rate = writeMeter_.bytesPerSec(t);
+  const int64_t freeB = freeBytesAt(folder_);
+  const int64_t minFree = static_cast<int64_t>(rate * 120.0);  // two minutes of the current write rate
+  const auto keep = show_.events.protectedRanges();
+  const auto del = segmentsToDelete(all, show_.settings.limit, freeB, minFree, keep);
+  for (const auto& d : del) {
+    if (auto it = stores_.find(d.inputId); it != stores_.end()) it->second->removeSegment(d.info.base);
+  }
+
+  auto setAlert = [&](const std::string& id, const std::string& text, bool on) {
+    auto found = std::find_if(alerts_.begin(), alerts_.end(), [&](const nlohmann::json& a) { return a.value("id", "") == id; });
+    if (on && found == alerts_.end()) alerts_.push_back({{"id", id}, {"text", text}, {"since", t}});
+    if (!on && found != alerts_.end()) alerts_.erase(found);
+    if (on && found != alerts_.end()) found->operator[]("text") = text;
+  };
+  const double secondsLeftNow = rate > 0 ? static_cast<double>(freeB) / rate : 1e18;
+  setAlert("disk-space", "Disk " + folder_.string() + ": " + std::to_string(static_cast<int>(secondsLeftNow / 60)) + " min left",
+           secondsLeftNow < show_.settings.lowSpaceMinutes * 60.0);
+  setAlert("disk-full", "Disk full and every old minute is protected by an event",
+           freeB < minFree && del.empty());
+  lastRetentionUs_ = t;
+}
+
+void Engine::previewLoop() {
+  const auto frameTime = std::chrono::milliseconds(33);
+  auto next = std::chrono::steady_clock::now();
+  int angleTick = 0;
+  while (running_) {
+    next += frameTime;
+    std::this_thread::sleep_until(next);
+    if (!running_) break;
+    try {
+      if (previewPlayer_ && source_ && previewEncoder_ && previewRenderer_ && sendBinary_) {
+        const TickResult tr = previewPlayer_->tick();
+        if (auto frame = source_->get(tr.inputId, tr.sourceUs)) {
+          const auto pic = previewRenderer_->render(*frame, tr.zoom);
+          const auto cpu = previewRenderer_->toCpu(pic);
+          for (const auto& p : previewEncoder_->encode(cpu, tr.sourceUs)) {
+            sendBinary_(bc::encodePreviewMessage("preview", p));
+          }
+        }
+      }
+      if (outputPlayer_ && outputEncoder_ && deps_.conv && sendBinary_) {
+        if (const auto pic = outputPlayer_->lastPicture()) {
+          const auto bgra = deps_.conv->toBgra8(*pic, kPreviewWidth, kPreviewHeight);
+          const auto cpu = deps_.conv->readback(*bgra);
+          for (const auto& p : outputEncoder_->encode(cpu, now())) {
+            sendBinary_(bc::encodePreviewMessage("output", p));
+          }
+        }
+      }
+      if (angleTick++ % 3 == 0 && source_ && sendBinary_ && previewPlayer_) {
+        const int64_t at = previewPlayer_->state().posUs;
+        uint32_t index = 0;
+        for (const auto& in : show_.inputs) {
+          if (const auto img = source_->preview(in.id, at)) {
+            std::vector<uint8_t> msg(16);
+            msg[0] = 'B';
+            msg[1] = 'R';
+            msg[2] = 'A';
+            msg[3] = 'P';
+            std::memcpy(&msg[4], &index, 4);
+            std::memcpy(&msg[8], &img->w, 4);
+            std::memcpy(&msg[12], &img->h, 4);
+            msg.insert(msg.end(), img->bgra.begin(), img->bgra.end());
+            sendBinary_(msg);
+          }
+          ++index;
+        }
+      }
+    } catch (const std::exception&) {
+      // a decode or encode failure never stops the engine; the next tick tries again
+    }
+  }
+}
+
+void Engine::retentionLoop() {
+  while (running_) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (!running_) break;
+    if (now() - lastRetentionUs_ >= 10'000'000) {
+      try {
+        retentionTick();
+      } catch (const std::exception&) {
+      }
+    }
+  }
+}
+
+void Engine::statusLoop() {
+  while (running_) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!running_ || !sendText_) continue;
+    try {
+      sendText_(statusJson().dump());
+      const uint64_t version = show_.events.version();
+      if (version != eventsVersionSent_) {
+        eventsVersionSent_ = version;
+        nlohmann::json e;
+        e["type"] = "events";
+        e["version"] = version;
+        e["events"] = show_.events.toJson();
+        sendText_(e.dump());
+      }
+    } catch (const std::exception&) {
+    }
+  }
+}
+
+nlohmann::json Engine::handle(const nlohmann::json& cmd) { return CommandRouter(*this).handle(cmd); }
+
+}  // namespace br
