@@ -117,6 +117,7 @@ class Engine {
   std::filesystem::path showJson_;
 
   std::mutex m_;  // show, stores, lists
+  std::recursive_mutex cmdM_;  // control commands and show persistence, one at a time
   bool recording_ = false;
   bool started_ = false;
   std::atomic<bool> running_{false};
@@ -147,6 +148,7 @@ class Engine {
   WriteRateMeter writeMeter_;
   int64_t lastBytes_ = 0;
   int64_t lastRetentionUs_ = 0;
+  int64_t lastSaveUs_ = 0;
   nlohmann::json alerts_ = nlohmann::json::array();
   uint64_t eventsVersionSent_ = 0;
 };

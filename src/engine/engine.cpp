@@ -326,6 +326,7 @@ const InputStore* Engine::store(const std::string& id) const {
 }
 
 void Engine::saveShow() {
+  std::lock_guard lock(cmdM_);
   show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
                        static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
   br::saveShow(showJson_, show_);
@@ -440,12 +441,27 @@ void Engine::previewLoop() {
   const auto frameTime = std::chrono::milliseconds(33);
   auto next = std::chrono::steady_clock::now();
   int angleTick = 0;
+  std::vector<std::string> angleIds;
   while (running_) {
     next += frameTime;
     std::this_thread::sleep_until(next);
     if (!running_) break;
     try {
       if (previewPlayer_ && source_ && previewEncoder_ && previewRenderer_ && sendBinary_) {
+        // At the live edge Preview follows the newest recorded timestamp; while reviewing it
+        // stays where the operator put it.
+        const int64_t newest = newestTs();
+        if (newest > 0 && !previewPlayer_->state().eventId &&
+            std::llabs(previewPlayer_->state().posUs - newest) <= 1'000'000) {
+          std::string firstAngle;
+          {
+            std::unique_lock cmdLock(cmdM_, std::try_to_lock);
+            if (cmdLock.owns_lock()) firstAngle = show_.inputs.empty() ? std::string() : show_.inputs.front().id;
+          }
+          const std::string angle =
+              previewPlayer_->state().angle.empty() ? firstAngle : previewPlayer_->state().angle;
+          if (!angle.empty()) previewPlayer_->cueAt(newest, angle);
+        }
         const TickResult tr = previewPlayer_->tick();
         if (auto frame = source_->get(tr.inputId, tr.sourceUs)) {
           const auto pic = previewRenderer_->render(*frame, tr.zoom);
@@ -466,9 +482,20 @@ void Engine::previewLoop() {
       }
       if (angleTick++ % 3 == 0 && source_ && sendBinary_ && previewPlayer_) {
         const int64_t at = previewPlayer_->state().posUs;
+        std::vector<std::string> ids;
+        {
+          std::unique_lock cmdLock(cmdM_, std::try_to_lock);
+          if (cmdLock.owns_lock()) {
+            ids.clear();
+            for (const auto& in : show_.inputs) ids.push_back(in.id);
+            angleIds = ids;
+          } else {
+            ids = angleIds;
+          }
+        }
         uint32_t index = 0;
-        for (const auto& in : show_.inputs) {
-          if (const auto img = source_->preview(in.id, at)) {
+        for (const auto& id : ids) {
+          if (const auto img = source_->preview(id, at)) {
             std::vector<uint8_t> msg(16);
             msg[0] = 'B';
             msg[1] = 'R';
@@ -509,19 +536,32 @@ void Engine::statusLoop() {
     try {
       sendText_(statusJson().dump());
       const uint64_t version = show_.events.version();
+      std::unique_lock cmdLock(cmdM_, std::try_to_lock);
+      if (!cmdLock.owns_lock()) continue;
       if (version != eventsVersionSent_) {
         eventsVersionSent_ = version;
         nlohmann::json e;
         e["type"] = "events";
         e["version"] = version;
         e["events"] = show_.events.toJson();
+        cmdLock.unlock();
         sendText_(e.dump());
+        cmdLock.lock();
+      }
+      // The workspace survives a crash: events and settings reach show.json within a few seconds.
+      const int64_t t = now();
+      if (t - lastSaveUs_ > 5'000'000) {
+        lastSaveUs_ = t;
+        saveShow();
       }
     } catch (const std::exception&) {
     }
   }
 }
 
-nlohmann::json Engine::handle(const nlohmann::json& cmd) { return CommandRouter(*this).handle(cmd); }
+nlohmann::json Engine::handle(const nlohmann::json& cmd) {
+  std::lock_guard lock(cmdM_);
+  return CommandRouter(*this).handle(cmd);
+}
 
 }  // namespace br
