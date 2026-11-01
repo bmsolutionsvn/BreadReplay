@@ -147,14 +147,20 @@ Rules:
   lesson). A segment whose last records point past the end of the essence is truncated to the
   last whole frame.
 
-### 4.3 Disk budget (estimates to confirm by the benchmark in the plan)
+### 4.3 Disk budget (measured on the build PC by `br_soak`, 2026-11-02)
 
-| Inputs at 1080p60, VMX SQ ≈150 Mbps | Write | Per hour |
+| Inputs at 1080p60, VMX SQ | Write | Per hour |
 |---|---|---|
-| 3 | ≈55 MB/s | ≈200 GB |
-| 8 | ≈150 MB/s | ≈540 GB |
-| 12 | ≈225 MB/s | ≈810 GB |
+| 3 | 39.3 MB/s | 141 GB |
+| 6 | 78.4 MB/s | 282 GB |
+| 8 | 101 MB/s (dropped frames; see below) | 363 GB |
+| 12 | not measured | — |
 
+Measured with a moving synthetic UYVY pattern, 0 reader misses. The synthetic pattern compresses
+like a busy game feed. **8 inputs at 1080p60 SQ do not hold on the build PC** (AMD RX 6600, CPU
+encode): the worst input dropped 969 of 36000 frames and encode p99 reached 80 ms, while the disk
+wrote 101 MB/s. 6 inputs held with 0 drops over 2 min and encode p99 under 11 ms. The ceiling is
+CPU encode time, not disk; a faster CPU or LQ/HQ settings move it.
 Plus two players reading at full size (≈40 MB/s) and preview reads (small). Advice in the UI and
 docs: a TLC NVMe used only for recording; QLC drives slow down once their cache fills.
 
