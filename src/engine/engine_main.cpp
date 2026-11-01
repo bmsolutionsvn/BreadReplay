@@ -38,7 +38,8 @@ std::filesystem::path knownFolder(REFKNOWNFOLDERID id) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  int port = 47820;
+  // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47820 failed to bind).
+  int port = 38820;
   std::string token;
   std::filesystem::path showDir = knownFolder(FOLDERID_Videos) / L"BreadReplay";
   const std::filesystem::path discovery = knownFolder(FOLDERID_LocalAppData) / L"BreadReplay" / L"engine.json";

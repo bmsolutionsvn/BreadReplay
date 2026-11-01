@@ -9,7 +9,7 @@ import { App } from './App';
 import { connect } from './api/client';
 
 const params = new URLSearchParams(location.hash.slice(1));
-const client = connect(params.get('port') ?? '47820', params.get('token') ?? '');
+const client = connect(params.get('port') ?? '38820', params.get('token') ?? '');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

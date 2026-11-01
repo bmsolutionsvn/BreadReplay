@@ -24,6 +24,10 @@
 #include "shell/process_launcher.h"
 #include "shell/supervisor.h"
 
+// TaskDialogIndirect exists only in Common Controls v6; without this the exe fails to start
+// ("ordinal 345 could not be located").
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
 using Microsoft::WRL::Callback;
 
 namespace {
@@ -40,7 +44,8 @@ struct App {
   ix::WebSocket ws;
   std::atomic<bool> quitting{false};
   std::thread worker;
-  int port = 47820;
+  // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47820 failed to bind).
+  int port = 38820;
   std::string token;
   std::filesystem::path exeDir;
 } g;
