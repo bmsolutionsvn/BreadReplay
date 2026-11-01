@@ -60,4 +60,6 @@ test('a saved remap moves Mark In and frees the old key', () => {
   expect(keyToCommand(key('i'), map, ctx)).toBeNull();
   // Actions the operator did not touch keep their defaults.
   expect(keyToCommand(key('o'), map, ctx)).toEqual({ cmd: 'mark.out' });
+  // Keys with no editable row, like the 1-second step, survive a remap map.
+  expect(keyToCommand(key('ArrowLeft', { shiftKey: true }), hotkeyMap(), ctx)).toEqual({ cmd: 'player.step', frames: -60 });
 });

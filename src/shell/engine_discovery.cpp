@@ -55,11 +55,16 @@ bool engineInstanceRunning() {
   return true;
 }
 
+bool isAliveReply(const nlohmann::json& reply) {
+  return reply.value("ok", false);
+}
+
 std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
                                           std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   for (;;) {
-    if (auto d = readDiscovery(file)) return d;
+    // A file left by a dead engine names a stale pid; keep waiting for the new one.
+    if (auto d = readDiscovery(file); d && isEngineProcess(d->pid)) return d;
     if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }

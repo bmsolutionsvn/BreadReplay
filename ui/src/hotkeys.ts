@@ -105,13 +105,17 @@ function comboOf(key: string): string {
 // The show file saves action -> key; the screen needs key -> command. Actions the
 // operator did not remap fall back to their spec §6.2 default.
 export function hotkeyMap(saved: Record<string, string> = {}): Record<string, Command> {
-  const out: Record<string, Command> = {};
+  // Start from every default so keys with no editable row (Shift+arrow) survive.
+  const out = { ...defaultHotkeys };
   for (const row of HOTKEY_ROWS) {
     const def = defaultHotkeyKeys[row.id];
-    const command = def ? defaultHotkeys[comboOf(def)] : undefined;
-    if (!command) continue;
-    const key = comboOf(saved[row.id] ?? def ?? '');
-    if (key) out[key] = command;
+    if (!def) continue;
+    const defKey = comboOf(def);
+    const want = comboOf(saved[row.id] ?? def);
+    if (want === defKey) continue;
+    const command = defaultHotkeys[defKey];
+    delete out[defKey];
+    if (want && command) out[want] = command;
   }
   return out;
 }

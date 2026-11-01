@@ -21,7 +21,8 @@ export function App({ client }: { client: Client }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
-  const [hotkeys, setHotkeys] = useState<Record<string, string>>({});
+  const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
+  const hotkeys = status?.hotkeys ?? savedHotkeys;
 
   useEffect(() => {
     const offStatus = client.onStatus(setStatus);
@@ -98,7 +99,7 @@ export function App({ client }: { client: Client }) {
           settings={{ ...defaultSettings, hotkeys }}
           status={status}
           onClose={() => setSettings(false)}
-          onHotkeys={setHotkeys}
+          onHotkeys={setSavedHotkeys}
         />
       )}
     </div>

@@ -65,6 +65,14 @@ struct Fixture {
 };
 }  // namespace
 
+TEST_CASE("Engine: status carries the saved hotkeys") {
+  Fixture f;
+  auto show = f.makeShow(0);
+  show.settings.hotkeys["mark.in"] = "J";
+  br::Engine engine(f.depsMakers(), show, f.dir.path / "show");
+  CHECK(engine.statusJson()["hotkeys"]["mark.in"] == "J");
+}
+
 TEST_CASE("Engine: two file inputs record 3 s each") {
   Fixture f;
   br::Engine engine(f.depsMakers(), f.makeShow(2), f.dir.path / "show");

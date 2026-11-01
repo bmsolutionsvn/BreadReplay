@@ -49,6 +49,7 @@ export interface Status {
   inputs: InputStatus[];
   disk: DiskStatus;
   alerts: Alert[];
+  hotkeys?: Record<string, string>;
   players: { preview: PlayerStatus; output: OutputPlayerStatus };
   events: { version: number };
 }

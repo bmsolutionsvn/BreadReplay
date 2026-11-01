@@ -155,9 +155,10 @@ int wmain(int argc, wchar_t** argv) {
     std::cerr << e.what() << "\n";
     return 4;
   }
-  engine.start();
   // A relaunched shell reads this to re-attach instead of starting a second engine.
+  // Write it as soon as the server listens; startup can take seconds.
   br::writeDiscovery(discovery, port, token);
+  engine.start();
   std::fprintf(stderr, "[breadreplay] engine on 127.0.0.1:%d\n", port);
 
   while (!g_quit) std::this_thread::sleep_for(std::chrono::milliseconds(100));

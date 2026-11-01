@@ -1,8 +1,11 @@
 #include <doctest/doctest.h>
 #include <windows.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+
+#include <nlohmann/json.hpp>
 
 #include "shell/engine_discovery.h"
 
@@ -41,6 +44,19 @@ TEST_CASE("a discovery file naming a live non-engine process is not adopted") {
   // The test runner is alive but is not breadreplay-engine.exe, so the shell's
   // identity gate must refuse this stale file.
   CHECK_FALSE(br::isEngineProcess(got->pid));
+}
+
+TEST_CASE("waitForDiscovery does not return a file whose pid is not the engine") {
+  TempDir dir;
+  const auto file = dir.path / "engine.json";
+  br::writeDiscovery(file, 49123, "0123456789abcdef");
+  CHECK_FALSE(br::waitForDiscovery(file, std::chrono::milliseconds(200)).has_value());
+}
+
+TEST_CASE("only a successful reply counts as engine liveness") {
+  CHECK(br::isAliveReply(nlohmann::json{{"ok", true}}));
+  CHECK_FALSE(br::isAliveReply(nlohmann::json{{"ok", false}}));
+  CHECK_FALSE(br::isAliveReply(nlohmann::json{{"type", "status"}}));
 }
 
 TEST_CASE("a torn or empty discovery file is ignored") {
