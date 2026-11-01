@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { Client } from './api/client';
-import { defaultHotkeys, keyToCommand } from './hotkeys';
+import { hotkeyMap, keyToCommand } from './hotkeys';
 import { Settings, defaultSettings } from './dialogs/Settings';
 import { AngleRow } from './screen/AngleRow';
 import { ControlsBar } from './screen/ControlsBar';
@@ -21,6 +21,7 @@ export function App({ client }: { client: Client }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const offStatus = client.onStatus(setStatus);
@@ -40,7 +41,7 @@ export function App({ client }: { client: Client }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (settings) return;
-      const cmd = keyToCommand(e, defaultHotkeys, {
+      const cmd = keyToCommand(e, hotkeyMap(hotkeys), {
         inputs: status?.inputs,
         previewLocked: status?.players.preview.locked,
         previewPlaying: status?.players.preview.playing,
@@ -54,7 +55,7 @@ export function App({ client }: { client: Client }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings]);
+  }, [client, status, selected, settings, hotkeys]);
 
   const event = events?.events.find((e) => e.id === selected) ?? null;
   const anchor = event?.inUs ?? status?.players.preview.posUs ?? 0;
@@ -91,7 +92,15 @@ export function App({ client }: { client: Client }) {
       </div>
 
       <StatusBar status={status} />
-      {settings && <Settings client={client} settings={defaultSettings} status={status} onClose={() => setSettings(false)} />}
+      {settings && (
+        <Settings
+          client={client}
+          settings={{ ...defaultSettings, hotkeys }}
+          status={status}
+          onClose={() => setSettings(false)}
+          onHotkeys={setHotkeys}
+        />
+      )}
     </div>
   );
 }

@@ -48,9 +48,10 @@ type Props = {
   status?: Status | null;
   outputs?: OutputConfig[];
   onClose: () => void;
+  onHotkeys?: (keys: Record<string, string>) => void;
 };
 
-export function Settings({ client, settings = defaultSettings, status = null, outputs = [], onClose }: Props) {
+export function Settings({ client, settings = defaultSettings, status = null, outputs = [], onClose, onHotkeys }: Props) {
   const [tab, setTab] = useState<Tab>('inputs');
   const [draft, setDraft] = useState<ShowSettings>(settings);
   const [limitHours, setLimitHours] = useState(settings.limit?.hours != null ? String(settings.limit.hours) : '');
@@ -88,6 +89,7 @@ export function Settings({ client, settings = defaultSettings, status = null, ou
         setError(reply.error);
         return;
       }
+      if (args.hotkeys) onHotkeys?.(hotkeys);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
