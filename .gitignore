@@ -6,3 +6,4 @@ ui/dist/
 ui/.vite/
 .vite/
 .soak/
+dist/
