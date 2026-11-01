@@ -1,4 +1,4 @@
-import { defaultHotkeys, keyToCommand, type HotkeyContext } from './hotkeys';
+import { defaultHotkeys, hotkeyMap, keyToCommand, type HotkeyContext } from './hotkeys';
 
 const ctx: HotkeyContext = {
   inputs: [{ id: 'cam1' }, { id: 'cam2' }, { id: 'cam3' }, { id: 'cam4' }],
@@ -52,4 +52,14 @@ test('trim needs a selected event', () => {
 
 test('a key without a mapping returns null', () => {
   expect(keyToCommand(key('q'), defaultHotkeys, ctx)).toBeNull();
+});
+
+test('a saved remap moves Mark In and frees the old key', () => {
+  const map = hotkeyMap({ 'mark.in': 'J' });
+  expect(keyToCommand(key('j'), map, ctx)).toEqual({ cmd: 'mark.in' });
+  expect(keyToCommand(key('i'), map, ctx)).toBeNull();
+  // Actions the operator did not touch keep their defaults.
+  expect(keyToCommand(key('o'), map, ctx)).toEqual({ cmd: 'mark.out' });
+  // Keys with no editable row, like the 1-second step, survive a remap map.
+  expect(keyToCommand(key('ArrowLeft', { shiftKey: true }), hotkeyMap(), ctx)).toEqual({ cmd: 'player.step', frames: -60 });
 });

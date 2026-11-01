@@ -379,6 +379,7 @@ nlohmann::json Engine::statusJson() {
   const double rate = writeMeter_.bytesPerSec(t);
   j["disk"] = {{"freeBytes", freeB}, {"secondsLeft", br::secondsLeft(freeB, rate)}, {"writeMBps", rate / 1'000'000.0}};
   j["alerts"] = alerts_;
+  j["hotkeys"] = show_.settings.hotkeys;
   auto playerJson = [&](Player& p) {
     nlohmann::json jp;
     jp["posUs"] = p.state().posUs;

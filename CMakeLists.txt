@@ -59,6 +59,7 @@ target_link_libraries(br_core PUBLIC bc_core bc_gpu bc_io omthx libvmx nlohmann_
 add_library(br_engine STATIC
   src/engine/engine.cpp
   src/engine/command_router.cpp
+  src/shell/engine_discovery.cpp
   "${BR_BREADCAMERA_DIR}/src/engine/adapter_factory.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_encoder.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_hub.cpp"
@@ -89,6 +90,7 @@ add_executable(br_tests
   tests/output_player_test.cpp
   tests/router_test.cpp
   tests/engine_test.cpp
+  tests/engine_discovery_test.cpp
 )
 target_include_directories(br_tests PRIVATE "${BR_BREADCAMERA_DIR}/tests")
 target_link_libraries(br_tests PRIVATE br_engine doctest::doctest)

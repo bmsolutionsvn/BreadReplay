@@ -23,6 +23,7 @@
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
 #include "io/ffmpeg_input.h"
+#include "shell/engine_discovery.h"
 
 namespace {
 std::atomic<bool> g_quit{false};
@@ -40,6 +41,7 @@ int wmain(int argc, wchar_t** argv) {
   int port = 47820;
   std::string token;
   std::filesystem::path showDir = knownFolder(FOLDERID_Videos) / L"BreadReplay";
+  const std::filesystem::path discovery = knownFolder(FOLDERID_LocalAppData) / L"BreadReplay" / L"engine.json";
   for (int i = 1; i + 1 < argc; i += 2) {
     const std::wstring k = argv[i], v = argv[i + 1];
     if (k == L"--port") {
@@ -153,6 +155,9 @@ int wmain(int argc, wchar_t** argv) {
     std::cerr << e.what() << "\n";
     return 4;
   }
+  // A relaunched shell reads this to re-attach instead of starting a second engine.
+  // Write it as soon as the server listens; startup can take seconds.
+  br::writeDiscovery(discovery, port, token);
   engine.start();
   std::fprintf(stderr, "[breadreplay] engine on 127.0.0.1:%d\n", port);
 
@@ -160,6 +165,8 @@ int wmain(int argc, wchar_t** argv) {
 
   engine.stop();
   server.stop();
+  std::error_code ec;
+  std::filesystem::remove(discovery, ec);
   CloseHandle(single);
   ix::uninitNetSystem();
   return 0;
