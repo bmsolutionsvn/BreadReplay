@@ -3,3 +3,6 @@ build/
 graphify-out/
 ui/node_modules/
 ui/dist/
+ui/.vite/
+.vite/
+.soak/
