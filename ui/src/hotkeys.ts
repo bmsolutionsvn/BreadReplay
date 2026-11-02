@@ -158,3 +158,7 @@ export function keyToCommand(e: KeyboardEvent, map: Record<string, Command> = de
   }
   return cmd;
 }
+// The key shown beside a button or menu item: the operator's remap, else the default.
+export function keyLabel(id: string, saved: Record<string, string> = {}): string {
+  return saved[id] ?? defaultHotkeyKeys[id] ?? '';
+}

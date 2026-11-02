@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 
 import type { Client } from '../api/client';
 import type { Event, Status } from '../api/types';
+import { useContextMenu } from '../ContextMenu';
 import { formatClock } from '../format';
 
 export interface TimeRange {
@@ -33,8 +34,11 @@ type Drag = { index: number; startX: number; startT: number; tUs: number };
 // Whole-game bar over a zoomed (≈30 s) track with the event's angle/speed blocks and one
 // recording lane per input (spec §7).
 export function Timeline({ client, events, selectedId, status, view, width = 1000 }: Props) {
+  const menu = useContextMenu();
   const event = events?.events.find((e) => e.id === selectedId) ?? null;
   const range = view ?? gameRange(event, events?.events ?? [], status);
+  // Nothing is recorded past the newest frame: lanes stop there instead of showing a red gap.
+  const recordedTo = Math.max(0, ...(status?.inputs ?? []).map((i) => i.coverage[i.coverage.length - 1]?.[1] ?? 0));
   const track = useRef<HTMLDivElement>(null);
   const [measured, setMeasured] = useState(0);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -88,7 +92,7 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
         </div>
       </div>
 
-      <div className="tl-row ruler">
+      <div className="tl-row ruler-row">
         <span className="tl-lab" />
         <div className="ruler">
           {[0, 0.25, 0.5, 0.75, 1].map((f) => (
@@ -99,7 +103,17 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
 
       <div className="tl-row" ref={track} data-testid="timeline-track" onMouseMove={move} onMouseUp={up} onMouseLeave={up}>
         <span className="tl-lab">{event ? `Event ${event.id}` : 'No event'}</span>
-        <div className="tl-lane evlane">
+        <div
+          className="tl-lane evlane"
+          onContextMenu={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const t = Math.round(xToTime(e.clientX - r.left, range, r.width));
+            menu(e, [
+              { label: `Cue Preview at ${formatClock(t)}`, onSelect: () => void client.send({ cmd: 'player.cueAt', player: 'preview', t }) },
+              { label: 'Back to live', onSelect: () => void client.send({ cmd: 'player.live', player: 'preview' }) },
+            ]);
+          }}
+        >
           {event && (
             <>
               <span className="inout" style={{ left: pct(event.inUs), width: widthPct(event.inUs, event.outUs) }} />
@@ -136,21 +150,21 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
         </div>
       )}
 
-      <div className="tl-row cams">
-        <span className="tl-lab">Rec</span>
-        <div className="lanes">
-          {(status?.inputs ?? []).map((input) => (
-            <div className="tl-lane lane" key={input.id} title={input.name}>
-              {input.coverage.map(([from, to], i) => (
-                <span key={`c${i}`} className="rec" style={{ left: pct(from), width: widthPct(from, to) }} />
-              ))}
-              {gaps(input.coverage, range).map(([from, to], i) => (
-                <span key={`g${i}`} className="gap" style={{ left: pct(from), width: widthPct(from, to) }} />
-              ))}
-            </div>
-          ))}
+      {(status?.inputs ?? []).map((input) => (
+        <div className="tl-row cams" key={input.id}>
+          <span className="tl-lab" title={`${input.name}: recorded (green), missing (red)`}>
+            {input.name}
+          </span>
+          <div className="tl-lane lane">
+            {input.coverage.map(([from, to], i) => (
+              <span key={`c${i}`} className="rec" style={{ left: pct(from), width: widthPct(from, to) }} />
+            ))}
+            {gaps(input.coverage, { fromUs: range.fromUs, toUs: Math.min(range.toUs, recordedTo) }).map(([from, to], i) => (
+              <span key={`g${i}`} className="gap" style={{ left: pct(from), width: widthPct(from, to) }} />
+            ))}
+          </div>
         </div>
-      </div>
+      ))}
     </section>
   );
 }

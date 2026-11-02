@@ -162,6 +162,14 @@ void startWebView() {
                               if (auto s9 = settings.try_query<ICoreWebView2Settings9>()) {
                                 s9->put_IsNonClientRegionSupportEnabled(TRUE);
                               }
+                              // An operator surface, not a browser: F5/Ctrl+R reload (F5 is also
+                              // Angle 5), Ctrl+P/F, Ctrl+wheel zoom and the URL status bar are off.
+                              // The page draws its own right-click menus; text fields keep theirs.
+                              settings->put_IsZoomControlEnabled(FALSE);
+                              settings->put_IsStatusBarEnabled(FALSE);
+                              if (auto s3 = settings.try_query<ICoreWebView2Settings3>()) {
+                                s3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
+                              }
                               RECT rc;
                               GetClientRect(g.hwnd, &rc);
                               g.controller->put_Bounds(rc);

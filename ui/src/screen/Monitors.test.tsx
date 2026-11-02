@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 
 import type { Status } from '../api/types';
-import { Monitors } from './Monitors';
+import { Monitors, playSeconds } from './Monitors';
 
 const status: Status = {
   recording: true,
@@ -20,4 +20,22 @@ test('Monitors: Output shows the remaining countdown and a red frame', () => {
   expect(screen.getByTestId('remaining')).toHaveTextContent('-00:07:24');
   expect(screen.getByLabelText('Output monitor')).toHaveClass('onair');
   expect(screen.getByLabelText('Preview monitor')).toHaveTextContent('Obs 1');
+});
+test('Monitors: an idle Output shows no timecode, no countdown and an empty bar', () => {
+  const idle: Status = { ...status, players: { ...status.players, output: { ...status.players.output, eventId: null, remainingS: null } } };
+  render(<Monitors status={idle} fps={59.94} />);
+  const out = screen.getByLabelText('Output monitor');
+  expect(out).not.toHaveClass('onair');
+  expect(out).toHaveTextContent('--:--:--:--');
+  expect(out).toHaveTextContent('OUTPUT · idle');
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+});
+
+test('Monitors: the progress bar follows the on-air event at its speed points', () => {
+  const ev = { id: 3, listId: 'g1', name: '', tags: [], angleNotes: {}, inUs: 0, outUs: 10_000_000, angles: [], speeds: [{ tUs: 0, speed: 0.5 }], zooms: [] };
+  expect(playSeconds(ev, 1)).toBeCloseTo(20);
+  const events = { version: 1, nextId: 4, nextListId: 2, currentList: 'g1', preRollUs: 0, postRollUs: 0, defaultSpeed: 0.5, lists: [], events: [ev] };
+  const mid: Status = { ...status, players: { ...status.players, output: { ...status.players.output, remainingS: 5 } } };
+  render(<Monitors status={mid} fps={59.94} events={events} />);
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');
 });
