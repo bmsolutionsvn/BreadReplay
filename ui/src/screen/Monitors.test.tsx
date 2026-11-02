@@ -27,7 +27,7 @@ test('Monitors: an idle Output shows no timecode, no countdown and an empty bar'
   const out = screen.getByLabelText('Output monitor');
   expect(out).not.toHaveClass('onair');
   expect(out).toHaveTextContent('--:--:--:--');
-  expect(out).toHaveTextContent('OUTPUT · idle');
+  expect(out).toHaveTextContent('ON AIR · nothing playing');
   expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
 });
 

@@ -25,7 +25,7 @@ export function EventList({ client, events, selectedId, onSelect, hotkeys = {} }
 
   return (
     <aside className="events" aria-label="Event list">
-      <h5>{`Events · ${list?.name ?? 'No list'}`}</h5>
+      <h5>{`Replays · ${list?.name ?? 'No list'}`}</h5>
       <div className="ev-list">
         {rows.map((e) => {
           const label = `${e.id} · ${formatClock(e.inUs)} · ${formatDuration(e.outUs - e.inUs)}`;
@@ -34,42 +34,43 @@ export function EventList({ client, events, selectedId, onSelect, hotkeys = {} }
               key={e.id}
               className={`ev ${selectedId === e.id ? 'sel' : ''}`}
               aria-label={label}
+              title="Click to load this replay in Preview. Right-click for more."
               onClick={() => void cue(e)}
               onContextMenu={(m) =>
                 menu(m, [
-                  { label: 'Cue in Preview', onSelect: () => void cue(e) },
+                  { label: 'Load in Preview', onSelect: () => void cue(e) },
                   {
-                    label: 'Cue and take to air',
+                    label: 'Play on air now',
                     hint: keyLabel('take', hotkeys),
                     onSelect: async () => {
                       await cue(e);
                       await client.send({ cmd: 'take' });
                     },
                   },
-                  { label: 'Clear angle cuts', onSelect: () => void client.send({ cmd: 'event.clearCuts', id: e.id }) },
+                  { label: 'Remove camera switches', onSelect: () => void client.send({ cmd: 'event.clearCuts', id: e.id }) },
                   'separator',
-                  { label: `Delete event ${e.id}`, danger: true, onSelect: () => void client.send({ cmd: 'event.delete', id: e.id }) },
+                  { label: `Delete replay ${e.id}`, danger: true, onSelect: () => void client.send({ cmd: 'event.delete', id: e.id }) },
                 ])
               }
             >
               <span>{label}</span>
-              {selectedId === e.id && <em>cued</em>}
+              {selectedId === e.id && <em>in Preview</em>}
             </button>
           );
         })}
         {rows.length === 0 && (
           <p className="note">
-            No events yet. Press <kbd>{keyLabel('mark.lastN', hotkeys)}</kbd> after a play to save the last seconds.
+            No replays yet. Press <kbd>{keyLabel('mark.lastN', hotkeys)}</kbd> right after a good play to save the last seconds as a replay.
           </p>
         )}
       </div>
       <button
         className="btn go"
         disabled={!list || rows.length === 0}
-        title={rows.length === 0 ? 'Mark some events first' : undefined}
+        title={rows.length === 0 ? 'Save some replays first.' : 'Plays every replay in this list one after another, like an end-of-game highlight reel.'}
         onClick={() => list && client.send({ cmd: 'highlight.play', listId: list.id })}
       >
-        Highlight ({list?.name ?? '—'})
+        Play all replays ({list?.name ?? '—'})
       </button>
     </aside>
   );

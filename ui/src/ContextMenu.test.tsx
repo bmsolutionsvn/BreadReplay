@@ -40,7 +40,7 @@ test('ContextMenu: the browser menu never shows outside text fields', () => {
 test('ContextMenu: right-click an event, Delete sends event.delete and closes', () => {
   const client = setup();
   fireEvent.contextMenu(screen.getByRole('button', { name: /^2 · / }));
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete event 2' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete replay 2' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'event.delete', id: 2 });
   expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 });

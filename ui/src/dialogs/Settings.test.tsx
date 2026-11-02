@@ -12,7 +12,7 @@ test('Settings: saving sends settings.set with only changed fields', async () =>
   const client = fake();
   const onClose = vi.fn();
   render(<Settings client={client} onClose={onClose} />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Playback' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Replays' }));
   fireEvent.change(screen.getByLabelText('Last N (s)'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -33,15 +33,15 @@ test('Settings: Run pre-flight shows minutes free and warnings', async () => {
   const client = fake({ ok: true, canRecord: true, minutesFree: 412.4, writeMBps: 180.2, warnings: ['Disk is slower than needed'], error: null });
   render(<Settings client={client} onClose={() => {}} />);
   fireEvent.click(screen.getByRole('tab', { name: 'Recording' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Run pre-flight' }));
-  expect(await screen.findByText(/412 min free/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Check the drive' }));
+  expect(await screen.findByText(/room for about 412 minutes/)).toBeInTheDocument();
   expect(screen.getByText('Disk is slower than needed')).toBeInTheDocument();
 });
 
 test('Settings: a hotkey conflict is shown inline', () => {
   const client = fake();
   render(<Settings client={client} onClose={() => {}} />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Hotkeys' }));
-  fireEvent.change(screen.getByLabelText('Mark Out key'), { target: { value: 'I' } });
-  expect(screen.getByText('Already used by Mark In')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Keyboard shortcuts' }));
+  fireEvent.change(screen.getByLabelText('Mark replay end key'), { target: { value: 'I' } });
+  expect(screen.getByText('Already used by Mark replay start')).toBeInTheDocument();
 });

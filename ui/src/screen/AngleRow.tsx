@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { Client } from '../api/client';
 import type { Status } from '../api/types';
 import { useContextMenu } from '../ContextMenu';
+import { signalHint } from '../format';
 import { keyLabel } from '../hotkeys';
 
 type Props = {
@@ -40,23 +41,24 @@ export function AngleRow({ status, client, hotkeys = {} }: Props) {
 
   return (
     <section className="angles" aria-label="Angles">
-      <h5>{`All angles at Preview time ${preview?.tc ?? '--:--:--:--'}`}</h5>
+      <h5 title="Every camera at the same moment as Preview. Click a camera to show it in Preview.">{`All cameras at ${preview?.tc ?? '--:--:--:--'}`}</h5>
       <div className="angle-row">
         {(status?.inputs ?? []).map((input, i) => (
           <button
             key={input.id}
             className={`angle ${preview?.angle === input.id ? 'sel' : ''}`}
             aria-label={`Angle ${input.name}`}
+            title={`Show ${input.name} in Preview. Right-click for more.`}
             onClick={() => client.send({ cmd: 'player.angle', player: 'preview', inputId: input.id })}
             onContextMenu={(e) =>
               menu(e, [
                 {
-                  label: `Show ${input.name} on Preview`,
+                  label: `Show ${input.name} in Preview`,
                   hint: keyLabel(`player.angle${i + 1}`, hotkeys),
                   onSelect: () => void client.send({ cmd: 'player.angle', player: 'preview', inputId: input.id }),
                 },
                 {
-                  label: `Go live on ${input.name}`,
+                  label: `Watch ${input.name} live now`,
                   onSelect: async () => {
                     await client.send({ cmd: 'player.angle', player: 'preview', inputId: input.id });
                     await client.send({ cmd: 'player.live', player: 'preview' });
@@ -68,7 +70,9 @@ export function AngleRow({ status, client, hotkeys = {} }: Props) {
             <canvas ref={(el) => (canvases.current[i] = el)} aria-hidden="true" />
             {i < 8 && <kbd className="slot">{keyLabel(`player.angle${i + 1}`, hotkeys)}</kbd>}
             <b>{input.name}</b>
-            <small className={`st ${input.state}`}>{input.state}</small>
+            <small className={`st ${input.state}`} title={signalHint(input.state)}>
+              {input.state}
+            </small>
           </button>
         ))}
       </div>

@@ -17,9 +17,9 @@ const RATES: Array<[string, string]> = [
 export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange: (patch: Partial<ShowSettings>) => void }) {
   return (
     <div className="tab-playback">
-      <h3>Playback</h3>
+      <h3>Replays</h3>
       <label className="field">
-        <span>Show frame rate</span>
+        <span>Frame rate (frames per second)</span>
         <select className="ctl" aria-label="Show frame rate" value={value.rate} onChange={(e) => onChange({ rate: e.target.value })}>
           {RATES.map(([v, l]) => (
             <option key={v} value={v}>
@@ -27,9 +27,10 @@ export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange
             </option>
           ))}
         </select>
+        <span className="hint">Match your production. Usually 59.94 or 50.</span>
       </label>
       <label className="field">
-        <span>Last N (s)</span>
+        <span>Save last length (seconds)</span>
         <input
           className="ctl mono"
           aria-label="Last N (s)"
@@ -38,9 +39,10 @@ export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange
           value={value.lastNSeconds}
           onChange={(e) => onChange({ lastNSeconds: Number(e.target.value) })}
         />
+        <span className="hint">How much the Save last button keeps. 10 to 15 seconds fits most plays.</span>
       </label>
       <label className="field">
-        <span>Cue pre-roll (s)</span>
+        <span>Start a little early (seconds)</span>
         <input
           className="ctl mono"
           aria-label="Cue pre-roll (s)"
@@ -50,9 +52,10 @@ export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange
           value={value.preRollS}
           onChange={(e) => onChange({ preRollS: Number(e.target.value) })}
         />
+        <span className="hint">A loaded replay starts this much before its start mark.</span>
       </label>
       <label className="field">
-        <span>Cue post-roll (s)</span>
+        <span>Run a little longer (seconds)</span>
         <input
           className="ctl mono"
           aria-label="Cue post-roll (s)"
@@ -62,25 +65,26 @@ export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange
           value={value.postRollS}
           onChange={(e) => onChange({ postRollS: Number(e.target.value) })}
         />
+        <span className="hint">A replay keeps playing this much after its end mark.</span>
       </label>
       <label className="field">
-        <span>Default speed</span>
+        <span>Speed for new replays</span>
         <select className="ctl" aria-label="Default speed" value={value.defaultSpeed} onChange={(e) => onChange({ defaultSpeed: Number(e.target.value) })}>
-          <option value={1}>100%</option>
-          <option value={0.75}>75%</option>
-          <option value={0.5}>50%</option>
-          <option value={0.25}>25%</option>
+          <option value={1}>100% (normal)</option>
+          <option value={0.75}>75% (slow motion)</option>
+          <option value={0.5}>50% (slow motion)</option>
+          <option value={0.25}>25% (very slow)</option>
         </select>
       </label>
       <label className="field">
-        <span>Transition</span>
+        <span>Between replays in Play all</span>
         <select className="ctl" aria-label="Transition" value={value.transition} onChange={(e) => onChange({ transition: e.target.value as ShowSettings['transition'] })}>
-          <option value="fade">Fade</option>
-          <option value="cut">Cut</option>
+          <option value="fade">Fade (smooth)</option>
+          <option value="cut">Cut (instant)</option>
         </select>
       </label>
       <label className="field">
-        <span>Fade (s)</span>
+        <span>Fade length (seconds)</span>
         <input
           className="ctl mono"
           aria-label="Fade (s)"
@@ -92,15 +96,16 @@ export function PlaybackTab({ value, onChange }: { value: ShowSettings; onChange
         />
       </label>
       <label className="field">
-        <span>End action</span>
+        <span>When a replay ends</span>
         <select className="ctl" aria-label="End action" value={value.endAction} onChange={(e) => onChange({ endAction: e.target.value as ShowSettings['endAction'] })}>
-          <option value="hold">Hold the last frame</option>
-          <option value="slate">Show the slate</option>
+          <option value="hold">Freeze on the last picture</option>
+          <option value="slate">Show the slate image</option>
         </select>
       </label>
       <label className="field">
         <span>Slate image</span>
         <input className="ctl mono" aria-label="Slate image" value={value.slatePath} placeholder="C:\Shows\slate.png" onChange={(e) => onChange({ slatePath: e.target.value })} />
+        <span className="hint">A picture (logo or sponsor) shown when a replay ends, if chosen above.</span>
       </label>
     </div>
   );

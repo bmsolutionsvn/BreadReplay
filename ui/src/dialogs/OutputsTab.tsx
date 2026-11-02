@@ -4,16 +4,17 @@ import type { Client } from '../api/client';
 import type { OutputConfig } from '../api/types';
 
 export const OUTPUT_KINDS: Array<[string, string]> = [
-  ['decklink', 'DeckLink'],
-  ['omt', 'OMT'],
-  ['ndi', 'NDI'],
-  ['fullscreen', 'Fullscreen'],
+  ['decklink', 'DeckLink card (SDI / HDMI cable)'],
+  ['omt', 'OMT (video over the local network)'],
+  ['ndi', 'NDI (video over the local network)'],
+  ['fullscreen', 'A screen on this PC (fullscreen)'],
 ];
+const kindName = (kind: string) => OUTPUT_KINDS.find(([k]) => k === kind)?.[1].split(' (')[0] ?? kind;
 
 function detailLabel(kind: string): string {
-  if (kind === 'fullscreen') return 'Monitor';
-  if (kind === 'ndi' || kind === 'omt') return 'Name';
-  return 'Device';
+  if (kind === 'fullscreen') return 'Screen number';
+  if (kind === 'ndi' || kind === 'omt') return 'Name others will see';
+  return 'Card number';
 }
 
 function paramsFor(kind: string, detail: string): Record<string, unknown> {
@@ -40,7 +41,8 @@ export function OutputsTab({ client, outputs }: { client: Pick<Client, 'send'>; 
 
   return (
     <div className="tab-outputs">
-      <h3>Outputs</h3>
+      <h3>On-air output</h3>
+      <p className="note">Where the replays go. The director takes this feed into the main switcher.</p>
       <ul className="cfg-list">
         {outputs.map((o) => (
           <li key={o.id}>
@@ -51,18 +53,18 @@ export function OutputsTab({ client, outputs }: { client: Pick<Client, 'send'>; 
                 checked={o.enabled}
                 onChange={(e) => client.send({ cmd: 'output.update', ...o, enabled: e.target.checked })}
               />
-              <span>{`${o.kind} · ${o.id}`}</span>
+              <span>{`${kindName(o.kind)} · ${o.id}`}</span>
             </label>
             <button className="btn ghost-danger" aria-label={`Remove ${o.kind} ${o.id}`} onClick={() => client.send({ cmd: 'output.remove', id: o.id })}>
               Remove
             </button>
           </li>
         ))}
-        {outputs.length === 0 && <li className="note">No outputs configured.</li>}
+        {outputs.length === 0 && <li className="note">No output yet. Add one below so the director can take the replays.</li>}
       </ul>
       <h3>Add an output</h3>
       <label className="field">
-        <span>Kind</span>
+        <span>Send to</span>
         <select className="ctl" aria-label="New output kind" value={kind} onChange={(e) => setKind(e.target.value)}>
           {OUTPUT_KINDS.map(([v, l]) => (
             <option key={v} value={v}>

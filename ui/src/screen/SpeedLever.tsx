@@ -11,7 +11,8 @@ export function SpeedLever({ status, client, hotkeys = {} }: { status: Status | 
   const locked = player?.locked ?? true;
   return (
     <div className={`lever ${locked ? 'locked' : ''}`}>
-      <span className="mono pct" aria-live="polite">
+      <span className="lbl">Speed</span>
+      <span className="mono pct" aria-live="polite" title="Replay speed in Preview. 100% is normal, lower is slow motion.">
         {Math.round(speed * 100)}%
       </span>
       <input
@@ -22,7 +23,7 @@ export function SpeedLever({ status, client, hotkeys = {} }: { status: Status | 
         step={0.05}
         value={Math.min(1, speed)}
         disabled={locked}
-        title={locked ? `Locked: press ${keyLabel('player.lock', hotkeys)} or click Locked to ride the lever` : undefined}
+        title={locked ? `Speed slider is locked so a bump cannot change it. Click Locked or press ${keyLabel('player.lock', hotkeys)} to unlock.` : 'Drag to change the replay speed (100% normal, lower = slow motion).'}
         onChange={(e) => client.send({ cmd: 'player.lever', player: 'preview', speed: Number(e.target.value) })}
       />
       <div className="presets">
@@ -30,20 +31,20 @@ export function SpeedLever({ status, client, hotkeys = {} }: { status: Status | 
           <button
             key={p}
             className={Math.abs(speed - p) < 0.01 ? 'on' : ''}
-            title={`${p * 100}% (${keyLabel(`player.preset${i + 1}`, hotkeys)})`}
+            title={`${p === 1 ? 'Normal speed' : `Slow motion at ${p * 100}%`} (${keyLabel(`player.preset${i + 1}`, hotkeys)})`}
             onClick={() => client.send({ cmd: 'player.preset', player: 'preview', speed: p })}
           >
-            {p * 100}
+            {p * 100}%
           </button>
         ))}
       </div>
       <button
         className={`lock ${locked ? 'on' : ''}`}
         aria-pressed={locked}
-        title={`Lock or unlock the lever (${keyLabel('player.lock', hotkeys)})`}
+        title={`${locked ? 'Locked: the speed slider cannot be dragged. Click to unlock.' : 'Unlocked: the speed slider can be dragged. Click to lock.'} (${keyLabel('player.lock', hotkeys)})`}
         onClick={() => client.send({ cmd: 'player.lock', player: 'preview', locked: !locked })}
       >
-        {locked ? 'Locked' : 'Free'}
+        {locked ? 'Locked' : 'Unlocked'}
       </button>
     </div>
   );

@@ -40,3 +40,10 @@ export function formatDiskLeft(secondsLeft: number | null): string {
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
+// Plain words for the four signal states (the state names themselves are fixed by the spec).
+export function signalHint(state: string): string {
+  if (state === 'live') return 'live: video is coming in';
+  if (state === 'connecting') return 'connecting: trying to reach the camera';
+  if (state === 'ready') return 'ready: connected, waiting for video';
+  return 'offline: no video from this camera';
+}

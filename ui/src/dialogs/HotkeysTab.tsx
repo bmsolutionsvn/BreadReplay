@@ -34,8 +34,8 @@ export function HotkeysTab({ value, onChange, onConflict }: Props) {
 
   return (
     <div className="tab-hotkeys">
-      <h3>Hotkeys</h3>
-      <p className="note">Every key is remappable. A key can only do one thing.</p>
+      <h3>Keyboard shortcuts</h3>
+      <p className="note">Click a box and press the key you want. Each key can do only one thing.</p>
       {conflict && (
         <div className="block danger" role="alert">
           {conflict}

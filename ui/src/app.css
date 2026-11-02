@@ -37,7 +37,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .btn.ghost-danger { border-color: transparent; background: none; color: var(--bm-danger); padding: 0 4px; }
 
 /* layout */
-.main { display: grid; grid-template-columns: minmax(0, 1fr) 46px 220px; gap: 8px; padding: 8px; min-height: 0; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 62px 240px; gap: 8px; padding: 8px; min-height: 0; }
 .stage { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; min-height: 0; min-width: 0; }
 
 /* monitors */
@@ -63,7 +63,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .lever { background: var(--bm-surface); border: 1px solid var(--bm-border); border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 8px 0; }
 .lever input[type='range'] { writing-mode: vertical-lr; direction: rtl; width: 18px; flex: 1; margin: 8px 0; accent-color: var(--bm-warning); }
 .lever input[type='range']:disabled { opacity: .45; }
-.lever .presets { display: grid; gap: 2px; width: 38px; margin-bottom: 6px; }
+.lever .lbl { font-size: 10.5px; color: var(--bm-text-dim); text-transform: uppercase; letter-spacing: .06em; }
+.lever .presets { display: grid; gap: 2px; width: 50px; margin-bottom: 6px; }
 .lever .presets button { height: 20px; border-radius: 3px; border: 1px solid var(--bm-border); font: 500 11px var(--mono); color: var(--bm-text-muted); }
 .lever .presets button:hover { background: var(--bm-surface-hover); }
 .lever .presets button.on { border-color: var(--bm-warning); color: var(--bm-warning); }
@@ -107,7 +108,7 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 
 /* timeline */
 .tl { background: var(--bm-surface); border: 1px solid var(--bm-border); border-radius: 4px; padding: 6px; display: grid; gap: 4px; min-height: 0; overflow: auto; }
-.tl-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px; align-items: center; }
+.tl-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px; align-items: center; }
 .tl-lab { font-size: 10.5px; color: var(--bm-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl-lane { position: relative; height: 18px; background: #151a20; border-radius: 2px; overflow: hidden; }
 .tl-row.game .tl-lane { height: 12px; }
@@ -157,7 +158,7 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .pane { padding: 10px 12px; overflow: auto; display: grid; align-content: start; gap: 6px; }
 .dlg-f { display: flex; justify-content: flex-end; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--bm-border); }
 .pane h3 { font-size: 12px; font-weight: 600; color: var(--bm-text); margin-top: 4px; }
-.field { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 28px; }
+.field { display: grid; grid-template-columns: 230px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 28px; }
 .field > span:first-child { color: var(--bm-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .field .hint { grid-column: 2; }
 .ctl { height: 26px; width: 100%; border-radius: 4px; background: var(--bm-bg); border: 1px solid var(--bm-border); color: var(--bm-text); padding: 0 8px; font: 400 12px var(--bm-font-sans); min-width: 0; }

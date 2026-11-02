@@ -17,5 +17,5 @@ test('AngleRow: clicking a tile sends player.angle for preview', () => {
   render(<AngleRow client={client} status={status} />);
   fireEvent.click(screen.getByRole('button', { name: 'Angle Obs 3' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'player.angle', player: 'preview', inputId: 'cam3' });
-  expect(screen.getByText('All angles at Preview time 01:14:02:11')).toBeInTheDocument();
+  expect(screen.getByText('All cameras at 01:14:02:11')).toBeInTheDocument();
 });

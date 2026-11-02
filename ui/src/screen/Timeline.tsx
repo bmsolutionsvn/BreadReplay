@@ -83,7 +83,7 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
   return (
     <section className="tl" aria-label="Timeline">
       <div className="tl-row game">
-        <span className="tl-lab">Whole game</span>
+        <span className="tl-lab" title="The whole recording. Yellow ticks are saved replays; the box is the part shown below.">Whole recording</span>
         <div className="tl-lane">
           {(events?.events ?? []).map((e) => (
             <span key={e.id} className="mk" style={{ left: pct(e.inUs) }} />
@@ -102,15 +102,15 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
       </div>
 
       <div className="tl-row" ref={track} data-testid="timeline-track" onMouseMove={move} onMouseUp={up} onMouseLeave={up}>
-        <span className="tl-lab">{event ? `Event ${event.id}` : 'No event'}</span>
+        <span className="tl-lab" title="The selected replay: coloured blocks show which camera plays when. Drag a block edge to move a camera switch.">{event ? `Replay ${event.id}` : 'No replay'}</span>
         <div
           className="tl-lane evlane"
           onContextMenu={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             const t = Math.round(xToTime(e.clientX - r.left, range, r.width));
             menu(e, [
-              { label: `Cue Preview at ${formatClock(t)}`, onSelect: () => void client.send({ cmd: 'player.cueAt', player: 'preview', t }) },
-              { label: 'Back to live', onSelect: () => void client.send({ cmd: 'player.live', player: 'preview' }) },
+              { label: `Show ${formatClock(t)} in Preview`, onSelect: () => void client.send({ cmd: 'player.cueAt', player: 'preview', t }) },
+              { label: 'Back to live (what is happening now)', onSelect: () => void client.send({ cmd: 'player.live', player: 'preview' }) },
             ]);
           }}
         >
@@ -139,7 +139,7 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
 
       {event && speeds.length > 0 && (
         <div className="tl-row">
-          <span className="tl-lab">Speed</span>
+          <span className="tl-lab" title="Replay speed along the replay. Striped parts are slow motion.">Speed</span>
           <div className="tl-lane speedlane">
             {speeds.map((s, i) => (
               <span key={i} className={`spd${s.speed < 0.99 ? ' slow' : ''}`} style={{ left: pct(s.tUs), width: widthPct(s.tUs, speeds[i + 1]?.tUs ?? event.outUs) }}>
@@ -152,7 +152,7 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
 
       {(status?.inputs ?? []).map((input) => (
         <div className="tl-row cams" key={input.id}>
-          <span className="tl-lab" title={`${input.name}: recorded (green), missing (red)`}>
+          <span className="tl-lab" title={`${input.name}: green = recorded, red = signal was missing`}>
             {input.name}
           </span>
           <div className="tl-lane lane">

@@ -11,7 +11,7 @@ test('SpeedLever: moving the lever sends player.lever', () => {
   const client = fake();
   const status = { players: { preview: { speed: 0.5, locked: false } } } as unknown as Status;
   render(<SpeedLever client={client} status={status} />);
-  expect(screen.getByText('50%')).toBeInTheDocument();
+  expect(screen.getByText('50%', { selector: '.pct' })).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Speed lever'), { target: { value: '0.75' } });
   expect(client.send).toHaveBeenCalledWith({ cmd: 'player.lever', player: 'preview', speed: 0.75 });
 });
@@ -22,6 +22,6 @@ test('SpeedLever: 0–100 % only, and a locked lever cannot be dragged', () => {
   const lever = screen.getByLabelText('Speed lever');
   expect(lever).toHaveAttribute('max', '1');
   expect(lever).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: '50' }));
+  fireEvent.click(screen.getByRole('button', { name: '50%' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'player.preset', player: 'preview', speed: 0.5 });
 });

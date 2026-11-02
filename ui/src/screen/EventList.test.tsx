@@ -23,8 +23,8 @@ const events: EventStore = {
 test('EventList: Highlight plays the current list', () => {
   const client = { send: vi.fn().mockResolvedValue({ ok: true }) };
   render(<EventList client={client} events={events} selectedId={3} onSelect={() => {}} />);
-  expect(screen.getByText('Events · Game 3')).toBeInTheDocument();
+  expect(screen.getByText('Replays · Game 3')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '3 · 01:12:29 · 0:12' })).toHaveClass('sel');
-  fireEvent.click(screen.getByRole('button', { name: 'Highlight (Game 3)' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Play all replays (Game 3)' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'highlight.play', listId: 'g1' });
 });

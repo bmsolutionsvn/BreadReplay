@@ -29,11 +29,11 @@ export const defaultSettings: ShowSettings = {
 
 type Tab = 'inputs' | 'outputs' | 'recording' | 'playback' | 'hotkeys';
 const TABS: Array<[Tab, string]> = [
-  ['inputs', 'Inputs'],
-  ['outputs', 'Outputs'],
+  ['inputs', 'Cameras'],
+  ['outputs', 'On-air output'],
   ['recording', 'Recording'],
-  ['playback', 'Playback'],
-  ['hotkeys', 'Hotkeys'],
+  ['playback', 'Replays'],
+  ['hotkeys', 'Keyboard shortcuts'],
 ];
 
 // Settings is a dialog, not a page (spec §7). Saving sends only what the operator changed.

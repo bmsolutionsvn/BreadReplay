@@ -28,7 +28,7 @@ export function playSeconds(ev: EventStore['events'][number], fallbackSpeed: num
 }
 
 function inputName(status: Status | null, id: string | undefined): string {
-  return status?.inputs.find((i) => i.id === id)?.name || id || 'No angle';
+  return status?.inputs.find((i) => i.id === id)?.name || id || 'No camera';
 }
 
 // Decodes the engine's H.264 preview with WebCodecs (hardware decode in WebView2).
@@ -81,39 +81,51 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
   const send = (c: Command) => void client?.send?.(c);
 
   const previewMenu: MenuItem[] = [
-    { label: 'Mark In', hint: keyLabel('mark.in', hotkeys), onSelect: () => send({ cmd: 'mark.in' }) },
-    { label: 'Mark Out', hint: keyLabel('mark.out', hotkeys), onSelect: () => send({ cmd: 'mark.out' }) },
-    { label: `Save last ${lastN} s`, hint: keyLabel('mark.lastN', hotkeys), onSelect: () => send({ cmd: 'mark.lastN', n: lastN }) },
+    { label: 'Mark replay start here', hint: keyLabel('mark.in', hotkeys), onSelect: () => send({ cmd: 'mark.in' }) },
+    { label: 'Mark replay end here', hint: keyLabel('mark.out', hotkeys), onSelect: () => send({ cmd: 'mark.out' }) },
+    { label: `Save the last ${lastN} seconds as a replay`, hint: keyLabel('mark.lastN', hotkeys), onSelect: () => send({ cmd: 'mark.lastN', n: lastN }) },
     'separator',
     { label: preview?.playing ? 'Pause' : 'Play', hint: keyLabel('player.play', hotkeys), onSelect: () => send({ cmd: preview?.playing ? 'player.pause' : 'player.play', player: 'preview' }) },
-    { label: 'Back to live', onSelect: () => send({ cmd: 'player.live', player: 'preview' }) },
-    { label: preview?.locked ? 'Unlock speed lever' : 'Lock speed lever', hint: keyLabel('player.lock', hotkeys), onSelect: () => send({ cmd: 'player.lock', player: 'preview', locked: !preview?.locked }) },
+    { label: 'Back to live (what is happening now)', onSelect: () => send({ cmd: 'player.live', player: 'preview' }) },
+    { label: preview?.locked ? 'Unlock the speed slider' : 'Lock the speed slider', hint: keyLabel('player.lock', hotkeys), onSelect: () => send({ cmd: 'player.lock', player: 'preview', locked: !preview?.locked }) },
     'separator',
-    { label: 'Take to air', hint: keyLabel('take', hotkeys), onSelect: () => send({ cmd: 'take' }) },
+    { label: 'Play this on air', hint: keyLabel('take', hotkeys), onSelect: () => send({ cmd: 'take' }) },
   ];
   const outputMenu: MenuItem[] = [
-    { label: output?.playing ? 'Pause output' : 'Play output', disabled: !onAir, onSelect: () => send({ cmd: output?.playing ? 'player.pause' : 'player.play', player: 'output' }) },
+    { label: output?.playing ? 'Pause what is on air' : 'Continue playing on air', disabled: !onAir, onSelect: () => send({ cmd: output?.playing ? 'player.pause' : 'player.play', player: 'output' }) },
   ];
 
   return (
     <div className="mons">
-      <div className="mon pv" aria-label="Preview monitor" onContextMenu={(e) => menu(e, previewMenu)}>
+      <div
+        className="mon pv"
+        aria-label="Preview monitor"
+        onContextMenu={(e) => menu(e, previewMenu)}
+      >
         {client && <MonitorCanvas client={client} id="preview" />}
-        <span className="tag">PREVIEW · operator</span>
+        <span className="tag" title="Only you see Preview. Find the moment here, then press Play on air.">
+          PREVIEW · only you see this
+        </span>
         <span className="tc">{preview?.tc ?? '--:--:--:--'}</span>
         <div className="ident">
           <b>{inputName(status, preview?.angle)}</b>
-          <small>{preview?.eventId ? `Event ${preview.eventId} cued` : 'Live'}</small>
+          <small>{preview?.eventId ? `Replay ${preview.eventId} loaded` : 'Live now'}</small>
         </div>
       </div>
-      <div className={`mon pg ${onAir ? 'onair' : ''}`} aria-label="Output monitor" onContextMenu={(e) => menu(e, outputMenu)}>
+      <div
+        className={`mon pg ${onAir ? 'onair' : ''}`}
+        aria-label="Output monitor"
+        onContextMenu={(e) => menu(e, outputMenu)}
+      >
         {client && <MonitorCanvas client={client} id="output" />}
-        <span className="tag">{onAir ? 'OUTPUT · on air' : 'OUTPUT · idle'}</span>
+        <span className="tag" title="What viewers see. The director takes this feed. Called 'Program' or 'Output' elsewhere.">
+          {onAir ? 'ON AIR · viewers see this' : 'ON AIR · nothing playing'}
+        </span>
         <span className="tc">
           {onAir ? `${output?.tc} · ${Math.round((output?.speed ?? 1) * 100)}%` : '--:--:--:--'}
         </span>
         <div className="remain">
-          <small>{output?.eventId ? `Event ${output.eventId} · ${inputName(status, output.angle)} · remaining` : 'No event on air'}</small>
+          <small>{output?.eventId ? `Replay ${output.eventId} · ${inputName(status, output.angle)} · time left` : 'Nothing on air. Load a replay in Preview, then press Play on air.'}</small>
           <div className="big" data-testid="remaining">
             {formatRemaining(output?.remainingS, fps)}
           </div>

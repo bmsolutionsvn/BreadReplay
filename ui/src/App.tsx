@@ -82,14 +82,18 @@ export function App({ client }: { client: Client }) {
         <b>BreadReplay</b>
         <span className={`pill ${status?.recording ? 'live' : 'offline'}`}>
           <i />
-          {status?.recording ? 'Recording' : 'Stopped'}
+          {status?.recording ? 'Recording' : 'Not recording'}
         </span>
-        {zoomMode && <span className="tag-note">Zoom mode</span>}
+        {zoomMode && <span className="tag-note">Zoom mode: drag on Preview to zoom in</span>}
         <div className="right">
-          <button className="btn" onClick={() => client.send({ cmd: status?.recording ? 'record.stop' : 'record.start' })}>
+          <button
+            className="btn"
+            title={status?.recording ? 'Stops saving the cameras to disk. You cannot make replays while it is stopped.' : 'Starts saving every camera to disk so you can make replays.'}
+            onClick={() => client.send({ cmd: status?.recording ? 'record.stop' : 'record.start' })}
+          >
             {status?.recording ? 'Stop recording' : 'Start recording'}
           </button>
-          <button className="btn" onClick={() => setSettings(true)}>
+          <button className="btn" title="Cameras, output, recording and keyboard shortcuts." onClick={() => setSettings(true)}>
             Settings
           </button>
         </div>

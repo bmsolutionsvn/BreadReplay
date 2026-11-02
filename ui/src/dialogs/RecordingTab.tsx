@@ -45,7 +45,7 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
     <div className="tab-recording">
       <h3>Recording</h3>
       <label className="field">
-        <span>Recording folder</span>
+        <span>Save recordings in</span>
         <input
           className="ctl mono"
           aria-label="Recording folder"
@@ -53,9 +53,10 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
           placeholder="D:\Replay"
           onChange={(e) => onChange({ recordingFolder: e.target.value })}
         />
+        <span className="hint">Use a fast drive that is only for recording (an NVMe SSD).</span>
       </label>
       <label className="field">
-        <span>Recording limit (hours)</span>
+        <span>Keep the last (hours)</span>
         <input
           className="ctl mono"
           aria-label="Recording limit (hours)"
@@ -64,22 +65,25 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
           placeholder="No limit"
           onChange={(e) => onLimitHours(e.target.value)}
         />
-        {limitError && (
+        {limitError ? (
           <span className="hint err" role="alert">
             {limitError}
           </span>
+        ) : (
+          <span className="hint">Older recording is deleted to make room. Saved replays are always kept. Empty = keep until the drive is full.</span>
         )}
       </label>
       <label className="field">
-        <span>VMX quality</span>
+        <span>Picture quality</span>
         <select className="ctl" aria-label="VMX quality" value={value.quality} onChange={(e) => onChange({ quality: e.target.value as ShowSettings['quality'] })}>
-          <option value="LQ">LQ</option>
-          <option value="SQ">SQ</option>
-          <option value="HQ">HQ</option>
+          <option value="LQ">Smaller files (LQ)</option>
+          <option value="SQ">Standard (SQ, recommended)</option>
+          <option value="HQ">Best picture, bigger files (HQ)</option>
         </select>
+        <span className="hint">Higher quality fills the drive faster.</span>
       </label>
       <label className="field">
-        <span>Low-space warning (min)</span>
+        <span>Low-space warning (minutes)</span>
         <input
           className="ctl mono"
           aria-label="Low-space warning (min)"
@@ -88,10 +92,11 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
           value={value.lowSpaceMinutes}
           onChange={(e) => onChange({ lowSpaceMinutes: Number(e.target.value) })}
         />
+        <span className="hint">Warns you when there is less room left than this for recording.</span>
       </label>
       <div className="row-end">
-        <button className="btn" onClick={run}>
-          Run pre-flight
+        <button className="btn" title="Tests the folder and how fast the drive can write, before the show starts." onClick={run}>
+          Check the drive
         </button>
       </div>
       {error && (
@@ -102,8 +107,8 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
       {preflight && (
         <div className="pf" role="status">
           <div>
-            <b>{preflight.canRecord ? 'Ready to record' : 'Cannot record'}</b> · {Math.round(preflight.minutesFree)} min free ·{' '}
-            {Math.round(preflight.writeMBps)} MB/s
+            <b>{preflight.canRecord ? 'Ready to record' : 'Cannot record'}</b> · room for about {Math.round(preflight.minutesFree)} minutes ·{' '}
+            drive writes {Math.round(preflight.writeMBps)} MB/s
           </div>
           {preflight.error && <div className="block danger">{preflight.error}</div>}
           {preflight.warnings.map((w) => (

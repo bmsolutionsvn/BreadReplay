@@ -13,7 +13,7 @@ test('StatusBar: shows time left and a persistent disk alert', () => {
     events: { version: 1 },
   } as unknown as Status;
   render(<StatusBar status={status} />);
-  expect(screen.getByText('10 min left')).toBeInTheDocument();
+  expect(screen.getByText('room for 10 min more')).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('Disk D: 10 min left');
   expect(screen.getByText('Obs 1')).toBeInTheDocument();
 });

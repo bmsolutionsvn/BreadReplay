@@ -10,8 +10,8 @@ test('InputsTab lists the configured inputs and adds one', () => {
   render(<InputsTab client={client} inputs={[input]} />);
   expect(screen.getByText('Obs 1')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('New input name'), { target: { value: 'Obs 2' } });
-  fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'srt://10.0.0.2:9000' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add input' }));
+  fireEvent.change(screen.getByLabelText('Stream address'), { target: { value: 'srt://10.0.0.2:9000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add camera' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'input.add', id: expect.any(String), name: 'Obs 2', kind: 'srt', params: { url: 'srt://10.0.0.2:9000' } });
   fireEvent.click(screen.getByRole('button', { name: 'Remove Obs 1' }));
   expect(client.send).toHaveBeenCalledWith({ cmd: 'input.remove', id: 'cam1' });
