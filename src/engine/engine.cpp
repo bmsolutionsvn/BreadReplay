@@ -456,6 +456,11 @@ void Engine::followLiveEdge() {
   if (!angle.empty()) previewPlayer_->cueAt(newest, angle);
 }
 
+void Engine::requestKeyframes() {
+  if (previewEncoder_) previewEncoder_->forceKeyframe();
+  if (outputEncoder_) outputEncoder_->forceKeyframe();
+}
+
 void Engine::previewLoop() {
   const auto frameTime = std::chrono::milliseconds(33);
   auto next = std::chrono::steady_clock::now();

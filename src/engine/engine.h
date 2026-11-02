@@ -62,6 +62,9 @@ class Engine {
   Player& playerFor(const std::string& which);
   // One preview-loop step: a never-cued or live Preview moves to the newest timestamp.
   void followLiveEdge();
+  // A window just connected: the next Preview and Output pictures are keyframes, so it can start
+  // decoding at once instead of waiting (or never, with encoders that send no periodic keyframes).
+  void requestKeyframes();
   void take();
   void recordStart();
   void recordStop();

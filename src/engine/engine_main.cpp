@@ -130,6 +130,7 @@ int wmain(int argc, wchar_t** argv) {
           std::lock_guard lock(clientsMutex);
           clients.insert(id);
         }
+        engine.requestKeyframes();
         server.send(id, engine.statusJson().dump());
         nlohmann::json e;
         e["type"] = "events";
