@@ -118,7 +118,7 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
             {formatRemaining(output?.remainingS, fps)}
           </div>
           <div className="prog" role="progressbar" aria-label="Event progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-            <span style={{ width: `${progress * 100}%` }} />
+            <span style={{ transform: `scaleX(${progress})` }} />
           </div>
         </div>
       </div>

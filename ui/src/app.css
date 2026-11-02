@@ -57,7 +57,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .mon .remain { align-self: stretch; }
 .mon .remain .big { font: 700 22px var(--mono); color: #fff; }
 .mon .remain .prog { height: 6px; background: var(--bm-border-strong); border-radius: 3px; overflow: hidden; margin-top: 4px; }
-.mon .remain .prog span { display: block; height: 100%; width: 0; background: var(--bm-signal-live); transition: width 200ms linear; }
+.mon .remain .prog span { display: block; height: 100%; width: 100%; transform: scaleX(0); transform-origin: left; background: var(--bm-signal-live); transition: transform 200ms linear; }
 
 /* speed lever */
 .lever { background: var(--bm-surface); border: 1px solid var(--bm-border); border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 8px 0; }
