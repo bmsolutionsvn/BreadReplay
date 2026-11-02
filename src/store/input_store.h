@@ -1,4 +1,6 @@
 #pragma once
+
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -31,6 +33,8 @@ class InputStore {
   std::optional<FrameRef> find(int64_t tsUs) const;  // at or before, else nullopt
   bool isGapAt(int64_t tsUs) const;                  // no frame within 2 periods before tsUs
   std::vector<uint8_t> readVideo(const FrameRef&, bool previewOnly) const;
+  // The size the frame was recorded at (its segment's header); {0, 0} for a stale ref.
+  std::pair<uint32_t, uint32_t> frameSize(const FrameRef&) const;
   std::vector<float> readAudio(const FrameRef&) const;
   std::vector<SegmentInfo> segments() const;
   bool removeSegment(const std::filesystem::path& base);  // refuses the open (writing) segment
@@ -58,6 +62,10 @@ class InputStore {
   SegmentHeader proto_;
   std::vector<Seg> segs_;
   int64_t periodUs_ = 0;
+  // A gap is more than two show frames and at least 100 ms: periodUs_ is the show's rate, so a
+  // 30 fps observer in a 59.94 show would otherwise "drop" every other frame.
+  // ponytail: fixed floor; track each input's measured cadence if 10-20 fps sources appear.
+  int64_t gapUs() const { return std::max<int64_t>(2 * periodUs_, 100'000); }
   bool forceNewSegment_ = false;
 };
 

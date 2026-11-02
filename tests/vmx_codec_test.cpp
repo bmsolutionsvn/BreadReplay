@@ -198,3 +198,40 @@ TEST_CASE("VmxCodec: NV12 and BGRA inputs encode") {
     CHECK(psnrLuma(ref, out, 1920, 1080) >= 35.0);
   }
 }
+namespace {
+Frame makeBgraSolid(uint32_t w, uint32_t h, uint8_t b, uint8_t g, uint8_t r) {
+  Frame f(w, h, bc::CpuPixel::BGRA);
+  for (size_t i = 0; i < f.storage.size(); i += 4) {
+    f.storage[i] = b;
+    f.storage[i + 1] = g;
+    f.storage[i + 2] = r;
+    f.storage[i + 3] = 255;
+  }
+  return f;
+}
+}  // namespace
+
+// The angle row reuses one decoder per input: a preview must never show rows of an older frame.
+TEST_CASE("VmxCodec: a reused decoder's preview shows only the newest frame") {
+  for (auto [w, h] : {std::pair{1280u, 720u}, std::pair{1920u, 1080u}}) {
+    CAPTURE(w);
+    br::VmxEncoder enc(w, h, br::VmxQuality::SQ);
+    auto red = makeBgraSolid(w, h, 0, 0, 220);
+    auto blue = makeBgraSolid(w, h, 220, 0, 0);
+    const br::EncodedFrame a = enc.encode(red.frame);
+    const br::EncodedFrame b = enc.encode(blue.frame);
+    CHECK(a.previewLen == br::vmxPreviewLength(a.bytes, w, h));
+
+    const br::Size ps = br::VmxDecoder::previewSize(w, h);
+    br::VmxDecoder dec(w, h);
+    std::vector<uint8_t> out(static_cast<size_t>(ps.w) * ps.h * 4);
+    dec.decodePreviewBGRA(std::span(a.bytes.data(), a.previewLen), out.data(), static_cast<int>(ps.w * 4));
+    dec.decodePreviewBGRA(std::span(b.bytes.data(), b.previewLen), out.data(), static_cast<int>(ps.w * 4));
+    int redRows = 0;
+    for (uint32_t y = 0; y < ps.h; ++y) {
+      const uint8_t* p = &out[(static_cast<size_t>(y) * ps.w + ps.w / 2) * 4];
+      if (p[2] > p[0]) ++redRows;  // red over blue: a row left from the first frame
+    }
+    CHECK(redRows == 0);
+  }
+}

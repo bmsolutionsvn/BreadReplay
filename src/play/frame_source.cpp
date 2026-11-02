@@ -42,16 +42,19 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
   }
 
   const auto& header = store.header();
-  ensureDecoder(inputId, header.width, header.height);
+  // Decode at the size this frame was recorded at: an input can change size mid-show.
+  const auto [w, h] = store.frameSize(*ref);
+  if (!w || !h) return nullptr;
+  ensureDecoder(inputId, w, h);
   const auto bytes = store.readVideo(*ref, false);
   if (bytes.empty()) return nullptr;  // the writer has not reached this frame yet
 
   auto frame = std::make_shared<DecodedFrame>();
   frame->tsUs = ref->tsUs;
-  frame->w = header.width;
-  frame->h = header.height;
-  frame->uyvy.resize(static_cast<size_t>(header.width) * header.height * 2);
-  decoders_[inputId].decoder->decodeUYVY(bytes, frame->uyvy.data(), static_cast<int>(header.width * 2));
+  frame->w = w;
+  frame->h = h;
+  frame->uyvy.resize(static_cast<size_t>(w) * h * 2);
+  decoders_[inputId].decoder->decodeUYVY(bytes, frame->uyvy.data(), static_cast<int>(w * 2));
   frame->audio = store.readAudio(*ref);
   frame->channels = header.audioChannels;
   frame->sampleRate = header.sampleRate;
@@ -79,11 +82,12 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   const InputStore& store = *sit->second;
   const auto ref = store.find(tsUs);
   if (!ref) return nullptr;
-  const auto& header = store.header();
-  ensureDecoder(inputId, header.width, header.height);
+  const auto [w, h] = store.frameSize(*ref);
+  if (!w || !h) return nullptr;
+  ensureDecoder(inputId, w, h);
   const auto prefix = store.readVideo(*ref, true);
   if (prefix.empty()) return nullptr;
-  const Size ps = VmxDecoder::previewSize(header.width, header.height);
+  const Size ps = VmxDecoder::previewSize(w, h);
   auto image = std::make_shared<PreviewImage>();
   image->tsUs = ref->tsUs;
   image->w = ps.w;

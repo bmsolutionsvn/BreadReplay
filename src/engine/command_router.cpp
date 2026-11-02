@@ -220,8 +220,10 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       } else if (name == "player.zoom") {
         p.setZoom(zoomFromJson(cmd.value("rect", nlohmann::json::object())));
       } else if (name == "player.live") {
+        // Back to the live edge on the angle the operator is on (the first input if none yet).
         const auto& inputs = engine_.show().inputs;
-        const std::string angle = inputs.empty() ? std::string() : inputs.front().id;
+        std::string angle = engine_.playerFor("preview").state().angle;
+        if (angle.empty() && !inputs.empty()) angle = inputs.front().id;
         engine_.playerFor("preview").cueAt(engine_.newestTs(), angle);
       } else {
         return {{"ok", false}, {"error", "unknown command '" + name + "'"}};

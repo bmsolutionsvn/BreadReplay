@@ -119,3 +119,13 @@ TEST_CASE("InputStore: removeSegment refuses the open segment") {
   CHECK(store.removeSegment(store.segments()[0].base));
   CHECK(store.segments().size() == 1);
 }
+TEST_CASE("InputStore: a 30 fps input in a 59.94 show is one continuous range") {
+  bc::test::TempDir dir;
+  auto show = proto();
+  show.rate = bc::Rate{60000, 1001};
+  br::InputStore store(dir.path, show);
+  const int64_t base = noon();
+  for (int i = 0; i <= 60; ++i) store.append(base + i * 33'367, video(i), 4, audio(i));  // 29.97 fps
+  CHECK(store.coverage().size() == 1);
+  CHECK_FALSE(store.isGapAt(base + 30 * 33'367 + 30'000));
+}

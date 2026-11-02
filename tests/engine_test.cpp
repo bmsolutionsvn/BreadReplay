@@ -118,3 +118,29 @@ TEST_CASE("Engine: a restarted engine reopens the show and keeps recording") {
   CHECK(engine.events().events().size() == 1);
   CHECK(engine.events().events().front().inUs == saved.events.events().front().inUs);
 }
+TEST_CASE("Engine: a fresh Preview follows the live edge on the first input") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(2), f.dir.path / "show");
+  engine.start();
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam0"); return s && s->frameCount() > 10; }, 20000));
+  engine.followLiveEdge();
+  const auto pv = engine.playerFor("preview").state();
+  const int64_t newest = engine.newestTs();
+  engine.stop();
+  CHECK(pv.angle == "cam0");
+  CHECK(std::llabs(pv.posUs - newest) <= 1'000'000);
+}
+
+TEST_CASE("Engine: a Preview restored with an angle but no position follows the live edge on it") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(2), f.dir.path / "show");
+  engine.start();
+  engine.playerFor("preview").setAngle("cam1");  // as a workspace restore leaves it: angle, time 0
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam1"); return s && s->frameCount() > 10; }, 20000));
+  engine.followLiveEdge();
+  const auto pv = engine.playerFor("preview").state();
+  const int64_t newest = engine.newestTs();
+  engine.stop();
+  CHECK(pv.angle == "cam1");
+  CHECK(std::llabs(pv.posUs - newest) <= 1'000'000);
+}

@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <set>
 
 #include "core/timecode.h"
 #include "engine/adapter_factory.h"
@@ -438,32 +440,48 @@ void Engine::retentionTick() {
   lastRetentionUs_ = t;
 }
 
+void Engine::followLiveEdge() {
+  // At the live edge Preview follows the newest recorded timestamp; while reviewing it stays where
+  // the operator put it. A Preview never cued (no angle yet) also follows: it starts at the edge.
+  const int64_t newest = newestTs();
+  const auto pv = previewPlayer_->state();
+  // "Never cued" includes an angle restored from the workspace with no position yet.
+  const bool neverCued = pv.angle.empty() || pv.posUs <= 0;
+  if (newest <= 0 || pv.eventId || (!neverCued && std::llabs(pv.posUs - newest) > 1'000'000)) return;
+  std::string angle = pv.angle;
+  if (angle.empty()) {
+    std::unique_lock cmdLock(cmdM_, std::try_to_lock);
+    if (cmdLock.owns_lock() && !show_.inputs.empty()) angle = show_.inputs.front().id;
+  }
+  if (!angle.empty()) previewPlayer_->cueAt(newest, angle);
+}
+
 void Engine::previewLoop() {
   const auto frameTime = std::chrono::milliseconds(33);
   auto next = std::chrono::steady_clock::now();
   int angleTick = 0;
   std::vector<std::string> angleIds;
+  // Each part fails on its own: a broken Preview encode must not blank Output or the angle row.
+  // A failure never stops the engine (the next tick tries again); each new message is logged once.
+  std::set<std::string> logged;
+  auto guarded = [&](const char* part, auto&& fn) {
+    try {
+      fn();
+    } catch (const std::exception& e) {
+      const std::string msg = std::string(part) + ": " + e.what();
+      if (logged.size() < 64 && logged.insert(msg).second) std::fprintf(stderr, "[breadreplay] %s\n", msg.c_str());
+    }
+  };
   while (running_) {
     next += frameTime;
     std::this_thread::sleep_until(next);
     if (!running_) break;
-    try {
-      if (previewPlayer_ && source_ && previewEncoder_ && previewRenderer_ && sendBinary_) {
-        // At the live edge Preview follows the newest recorded timestamp; while reviewing it
-        // stays where the operator put it.
-        const int64_t newest = newestTs();
-        if (newest > 0 && !previewPlayer_->state().eventId &&
-            std::llabs(previewPlayer_->state().posUs - newest) <= 1'000'000) {
-          std::string firstAngle;
-          {
-            std::unique_lock cmdLock(cmdM_, std::try_to_lock);
-            if (cmdLock.owns_lock()) firstAngle = show_.inputs.empty() ? std::string() : show_.inputs.front().id;
-          }
-          const std::string angle =
-              previewPlayer_->state().angle.empty() ? firstAngle : previewPlayer_->state().angle;
-          if (!angle.empty()) previewPlayer_->cueAt(newest, angle);
-        }
-        const TickResult tr = previewPlayer_->tick();
+    guarded("preview", [&] {
+      if (!previewPlayer_) return;
+      followLiveEdge();
+      // The playhead moves even without an H.264 encoder; only the pictures need one.
+      const TickResult tr = previewPlayer_->tick();
+      if (source_ && previewEncoder_ && previewRenderer_ && sendBinary_) {
         if (auto frame = source_->get(tr.inputId, tr.sourceUs)) {
           const auto pic = previewRenderer_->render(*frame, tr.zoom);
           const auto cpu = previewRenderer_->toCpu(pic);
@@ -472,6 +490,8 @@ void Engine::previewLoop() {
           }
         }
       }
+    });
+    guarded("output", [&] {
       if (outputPlayer_ && outputEncoder_ && deps_.conv && sendBinary_) {
         if (const auto pic = outputPlayer_->lastPicture()) {
           const auto bgra = deps_.conv->toBgra8(*pic, kPreviewWidth, kPreviewHeight);
@@ -481,6 +501,8 @@ void Engine::previewLoop() {
           }
         }
       }
+    });
+    guarded("angles", [&] {
       if (angleTick++ % 3 == 0 && source_ && sendBinary_ && previewPlayer_) {
         const int64_t at = previewPlayer_->state().posUs;
         std::vector<std::string> ids;
@@ -511,9 +533,7 @@ void Engine::previewLoop() {
           ++index;
         }
       }
-    } catch (const std::exception&) {
-      // a decode or encode failure never stops the engine; the next tick tries again
-    }
+    });
   }
 }
 

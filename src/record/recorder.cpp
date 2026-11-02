@@ -147,7 +147,6 @@ void Recorder::worker() {
 }
 
 void Recorder::writerLoop() {
-  uint32_t lastW = 0, lastH = 0;
   for (;;) {
     Done d;
     {
@@ -164,10 +163,10 @@ void Recorder::writerLoop() {
       done_.erase(it);
       ++nextWrite_;
     }
-    if (d.w && d.h && (d.w != lastW || d.h != lastH)) {
-      if (lastW) store_.changeVideoFormat(d.w, d.h, store_.header().rate);
-      lastW = d.w;
-      lastH = d.h;
+    // Compare with the store's header, not the previous frame: an input whose first frame is not
+    // the show size (a 720p observer in a 1080p show) must start a segment with its own size.
+    if (d.w && d.h && (d.w != store_.header().width || d.h != store_.header().height)) {
+      store_.changeVideoFormat(d.w, d.h, store_.header().rate);
     }
     const std::span<const uint8_t> bytes = d.coded ? std::span<const uint8_t>(d.raw) : std::span<const uint8_t>(d.frame.bytes);
     store_.append(d.tsUs, bytes, d.frame.previewLen, d.audio);

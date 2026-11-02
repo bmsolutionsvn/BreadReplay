@@ -103,7 +103,7 @@ std::optional<FrameRef> InputStore::find(int64_t tsUs) const {
 bool InputStore::isGapAt(int64_t tsUs) const {
   const auto ref = find(tsUs);
   if (!ref) return true;
-  return tsUs - ref->tsUs > 2 * periodUs_;
+  return tsUs - ref->tsUs > gapUs();
 }
 
 std::vector<uint8_t> InputStore::readVideo(const FrameRef& ref, bool previewOnly) const {
@@ -112,6 +112,13 @@ std::vector<uint8_t> InputStore::readVideo(const FrameRef& ref, bool previewOnly
   auto* r = const_cast<SegmentReader*>(segs_[ref.segment].reader.get());
   r->refresh();
   return r->readVideo(ref.index, previewOnly);
+}
+
+std::pair<uint32_t, uint32_t> InputStore::frameSize(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return {0, 0};
+  const auto& h = segs_[ref.segment].reader->header();
+  return {h.width, h.height};
 }
 
 std::vector<float> InputStore::readAudio(const FrameRef& ref) const {
@@ -169,7 +176,7 @@ std::vector<std::pair<int64_t, int64_t>> InputStore::coverage() const {
   std::vector<std::pair<int64_t, int64_t>> out;
   for (const auto& s : segs_) {
     for (int64_t t : s.times) {
-      if (out.empty() || t - out.back().second > 2 * periodUs_) {
+      if (out.empty() || t - out.back().second > gapUs()) {
         out.emplace_back(t, t);
       } else {
         out.back().second = t;

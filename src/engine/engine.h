@@ -60,6 +60,8 @@ class Engine {
   int64_t newestTs() const;
 
   Player& playerFor(const std::string& which);
+  // One preview-loop step: a never-cued or live Preview moves to the newest timestamp.
+  void followLiveEdge();
   void take();
   void recordStart();
   void recordStop();

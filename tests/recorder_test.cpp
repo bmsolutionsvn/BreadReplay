@@ -3,6 +3,7 @@
 #include <chrono>
 #include <thread>
 
+#include "play/frame_source.h"
 #include "record/recorder.h"
 #include "support/temp_dir.h"
 
@@ -143,4 +144,25 @@ TEST_CASE("Recorder: a size change starts a new segment") {
   REQUIRE(waitFor([&] { return rec.stats().framesWritten == 40; }, 10000));
   rec.stop();
   CHECK(store.segments().size() == 2);
+}
+// Review focus 1: an observer that is not the show size from its very first frame.
+TEST_CASE("Recorder: an input smaller than the show from its first frame decodes at its own size") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());  // the show size: 320x180
+  br::Recorder rec(store, br::VmxQuality::SQ, 512, 2);
+  const int64_t base = baseTs();
+  for (int i = 0; i < 30; ++i) {
+    Frame f(160, 96, static_cast<uint8_t>(100));
+    rec.pushVideo(f.frame, base + i * 16683);
+  }
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 30; }, 20000));
+  CHECK(store.header().width == 160);
+  CHECK(store.header().height == 96);
+
+  br::FrameSource source({{"cam1", &store}}, 1, 8);
+  const auto frame = source.get("cam1", base + 10 * 16683);
+  REQUIRE(frame);
+  CHECK(frame->w == 160);
+  CHECK(frame->h == 96);
+  CHECK(source.preview("cam1", base + 10 * 16683));
 }
