@@ -27,7 +27,6 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* title bar */
 .top { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--bm-rail); border-bottom: 1px solid var(--bm-border); }
-.top b { font-size: 13px; letter-spacing: -0.01em; }
 .top .right { margin-left: auto; display: flex; gap: 6px; }
 .tag-note { color: var(--bm-brand); font: 500 11px var(--mono); }
 .pill { height: 18px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--bm-border-strong); display: inline-flex; align-items: center; gap: 5px; font: 500 10.5px var(--mono); letter-spacing: .05em; }

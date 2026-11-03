@@ -10,7 +10,7 @@ Run this on the show PC with the real cameras. Every line is a pass/fail the own
 - [ ] Play a Game highlight: events in list order, Fade between them.
 - [ ] Pull the recording drive's free space under the warning: the disk alert stays on screen.
 - [ ] Kill `breadreplay-engine.exe` in Task Manager: it is back within 3 s and the events are intact.
-- [ ] Close the window: the dialog says "Stop recording and quit BreadReplay?" and "Stop and quit" stops the engine.
+- [ ] Close the window: while recording the dialog says "Stop recording and quit BreadReplay?" and "Stop and quit" stops the engine; while stopped Close quits at once.
 
 ## Measured on the build PC
 

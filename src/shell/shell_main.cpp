@@ -45,8 +45,8 @@ struct App {
   std::unique_ptr<bc::Supervisor> supervisor;
   ix::WebSocket ws;
   std::atomic<bool> quitting{false};
-  // The engine's latest status: Close only asks while recording.
-  std::atomic<bool> recording{false};
+  // Unknown until the engine's first status frame: ask, and never kill a recording on a guess.
+  std::atomic<bool> recording{true};
   std::thread worker;
   // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47820 failed to bind).
   int port = 38820;
