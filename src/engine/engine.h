@@ -147,6 +147,10 @@ class Engine {
 
   std::unique_ptr<bc::PreviewEncoder> previewEncoder_;
   std::unique_ptr<bc::PreviewEncoder> outputEncoder_;
+  // Set by requestKeyframes (control thread) and consumed by previewLoop (preview thread), so the
+  // lazily opened encoders are never touched across threads.
+  std::atomic<bool> previewKeyframe_{false};
+  std::atomic<bool> outputKeyframe_{false};
   std::string lastEventJsonVersion_;
   std::map<std::string, std::pair<int64_t, uint64_t>> fpsSamples_;
   std::map<std::string, double> fpsValues_;

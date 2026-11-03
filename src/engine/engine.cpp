@@ -471,8 +471,8 @@ void Engine::followLiveEdge() {
 }
 
 void Engine::requestKeyframes() {
-  if (previewEncoder_) previewEncoder_->forceKeyframe();
-  if (outputEncoder_) outputEncoder_->forceKeyframe();
+  previewKeyframe_ = true;
+  outputKeyframe_ = true;
 }
 
 void Engine::previewLoop() {
@@ -513,6 +513,7 @@ void Engine::previewLoop() {
       if (surfaces_ && surfaces_->wanted().contains("preview")) surfaces_->present("preview", *pic);
       if (!wantBinary || !sendBinary_) return;
       if (!previewEncoder_) previewEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+      if (previewKeyframe_.exchange(false)) previewEncoder_->forceKeyframe();
       const auto cpu = previewRenderer_->toCpu(pic);
       for (const auto& p : previewEncoder_->encode(cpu, tr.sourceUs)) {
         sendBinary_(bc::encodePreviewMessage("preview", p));
@@ -525,6 +526,7 @@ void Engine::previewLoop() {
       if (surfaces_ && surfaces_->wanted().contains("output")) surfaces_->present("output", *pic);
       if (!wantBinary || !deps_.conv || !sendBinary_) return;
       if (!outputEncoder_) outputEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+      if (outputKeyframe_.exchange(false)) outputEncoder_->forceKeyframe();
       const auto bgra = deps_.conv->toBgra8(*pic, kPreviewWidth, kPreviewHeight);
       const auto cpu = deps_.conv->readback(*bgra);
       for (const auto& p : outputEncoder_->encode(cpu, now())) {
