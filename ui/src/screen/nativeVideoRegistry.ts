@@ -23,12 +23,13 @@ interface WebViewBridge {
 }
 const bridge = (): WebViewBridge | undefined => (window as unknown as { chrome?: { webview?: WebViewBridge } }).chrome?.webview;
 
-function postToShell(msg: Record<string, unknown>) {
+// The shell bridge, shared by every page-side message (native video layers, window actions).
+export function postToShell(msg: Record<string, unknown>) {
   bridge()?.postMessage(JSON.stringify(msg));
 }
 
 // The shell sends JSON (PostWebMessageAsJson), so e.data is already an object.
-function onShellMessage(fn: (m: { type?: string; [k: string]: unknown }) => void): () => void {
+export function onShellMessage(fn: (m: { type?: string; [k: string]: unknown }) => void): () => void {
   const b = bridge();
   if (!b) return () => {};
   const h = (e: { data: unknown }) => fn((e.data ?? {}) as { type?: string });

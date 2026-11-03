@@ -16,7 +16,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 :focus-visible { outline: 1px solid var(--bm-brand); outline-offset: -1px; }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-.app { height: 100%; display: grid; grid-template-rows: 34px minmax(0, 1fr) auto; background: var(--bm-bg); }
+.app { height: 100%; display: grid; grid-template-rows: 32px 34px minmax(0, 1fr) auto; background: var(--bm-bg); }
+
+/* window title bar: 32 px, drags the window; its buttons do not (they send window actions) */
+.titlebar { height: 32px; display: flex; align-items: center; padding-left: 10px; background: var(--bm-rail); border-bottom: 1px solid var(--bm-border); app-region: drag; }
+.titlebar .name { margin-right: auto; color: var(--bm-text); font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.titlebar button { width: 46px; height: 32px; display: grid; place-items: center; color: var(--bm-text-muted); app-region: no-drag; }
+.titlebar button:hover { background: var(--bm-surface-hover); color: var(--bm-text); }
+.titlebar button.close:hover { background: #C42B1C; color: #fff; }
 
 /* title bar */
 .top { display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--bm-rail); border-bottom: 1px solid var(--bm-border); }

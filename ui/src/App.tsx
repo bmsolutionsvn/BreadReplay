@@ -12,6 +12,7 @@ import { nativeVideoRequested, startNativeVideo } from './screen/nativeVideoRegi
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
+import { TitleBar } from './screen/TitleBar';
 import { setEvents, setStatus, useEvents, useStatus } from './state/store';
 
 const FPS = 60_000 / 1001;
@@ -93,8 +94,8 @@ export function App({ client }: { client: Client }) {
   return (
     <ContextMenuHost>
     <div className="app">
+      <TitleBar />
       <header className="top">
-        <b>BreadReplay</b>
         <span className={`pill ${status?.recording ? 'live' : 'offline'}`}>
           <i />
           {status?.recording ? 'Recording' : 'Not recording'}
