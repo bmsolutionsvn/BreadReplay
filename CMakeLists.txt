@@ -63,6 +63,7 @@ add_library(br_engine STATIC
   "${BR_BREADCAMERA_DIR}/src/engine/adapter_factory.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_encoder.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_hub.cpp"
+  "${BR_BREADCAMERA_DIR}/src/engine/surface_hub.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/control_server.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/chart_detector.cpp"
 )
@@ -107,12 +108,13 @@ omthx_copy_runtime(breadreplay-engine)
 # ---- shell ----
 add_executable(BreadReplay WIN32
   src/shell/shell_main.cpp
+  "${BR_BREADCAMERA_DIR}/src/shell/composition_host.cpp"
   "${BR_BREADCAMERA_DIR}/src/shell/supervisor.cpp"
   "${BR_BREADCAMERA_DIR}/src/shell/process_launcher.cpp"
 )
 target_include_directories(BreadReplay PRIVATE "${BR_BREADCAMERA_DIR}/src")
 target_link_libraries(BreadReplay PRIVATE br_engine bc_core ixwebsocket::ixwebsocket
-  unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi comctl32)
+  unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi comctl32 dcomp uiautomationcore)
 bc_copy_runtime(BreadReplay)
 omthx_copy_runtime(BreadReplay)
 

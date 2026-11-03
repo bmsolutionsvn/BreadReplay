@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { Client } from './api/client';
 import { ContextMenuHost } from './ContextMenu';
@@ -8,6 +8,7 @@ import { AngleRow } from './screen/AngleRow';
 import { ControlsBar } from './screen/ControlsBar';
 import { EventList } from './screen/EventList';
 import { Monitors } from './screen/Monitors';
+import { nativeVideoRequested, startNativeVideo } from './screen/nativeVideoRegistry';
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
@@ -19,6 +20,8 @@ const FPS = 60_000 / 1001;
 export function App({ client }: { client: Client }) {
   const status = useStatus();
   const events = useEvents();
+  const native = nativeVideoRequested() && status?.nativeVideo === true;
+  const haveStatus = status !== null;
   const [selected, setSelected] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
@@ -33,6 +36,18 @@ export function App({ client }: { client: Client }) {
       offEvents();
     };
   }, [client]);
+
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle('native-video', native);
+    return () => document.documentElement.classList.remove('native-video');
+  }, [native]);
+  useEffect(() => (native ? startNativeVideo(client) : undefined), [client, native]);
+  // Fallback mode (no flag, or the engine says why native video is off) asks for H.264/raw
+  // pictures once per connection; the client resends on every reconnect.
+  useEffect(() => {
+    if (native || !haveStatus) return;
+    void client.wantPreviews();
+  }, [client, native, haveStatus]);
 
   // A newly marked event becomes the selected one (the operator just made it); otherwise keep the
   // selection while it exists.
@@ -101,8 +116,8 @@ export function App({ client }: { client: Client }) {
 
       <div className="main">
         <div className="stage">
-          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} />
-          <AngleRow status={status} client={client} hotkeys={hotkeys} />
+          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} />
+          <AngleRow status={status} client={client} hotkeys={hotkeys} native={native} />
           <Timeline client={client} events={events} selectedId={selected} status={status} view={view} />
           <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} />
         </div>

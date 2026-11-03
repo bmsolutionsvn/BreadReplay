@@ -5,6 +5,7 @@ import type { EventStore, Status } from '../api/types';
 import { useContextMenu, type MenuItem } from '../ContextMenu';
 import { formatRemaining } from '../format';
 import { keyLabel } from '../hotkeys';
+import { NativeVideo } from './NativeVideo';
 
 type Props = {
   status: Status | null;
@@ -13,6 +14,7 @@ type Props = {
   events?: EventStore | null;
   hotkeys?: Record<string, string>;
   lastN?: number;
+  native?: boolean;
 };
 
 // Seconds the on-air event takes to play at its speed points (the lever's speed when it has none).
@@ -70,7 +72,7 @@ function MonitorCanvas({ client, id }: { client: Pick<Client, 'onPreview'>; id: 
   return <canvas ref={canvas} aria-hidden="true" />;
 }
 
-export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, lastN = 12 }: Props) {
+export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, lastN = 12, native = false }: Props) {
   const menu = useContextMenu();
   const preview = status?.players.preview;
   const output = status?.players.output;
@@ -102,7 +104,9 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
         aria-label="Preview monitor"
         onContextMenu={(e) => menu(e, previewMenu)}
       >
-        {client && <MonitorCanvas client={client} id="preview" />}
+        {client && (
+          <NativeVideo id="preview" native={native} fallback={<MonitorCanvas client={client} id="preview" />} />
+        )}
         <span className="tag" title="Only you see Preview. Find the moment here, then press Play on air.">
           PREVIEW · only you see this
         </span>
@@ -117,7 +121,9 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
         aria-label="Output monitor"
         onContextMenu={(e) => menu(e, outputMenu)}
       >
-        {client && <MonitorCanvas client={client} id="output" />}
+        {client && (
+          <NativeVideo id="output" native={native} fallback={<MonitorCanvas client={client} id="output" />} />
+        )}
         <span className="tag" title="What viewers see. The director takes this feed. Called 'Program' or 'Output' elsewhere.">
           {onAir ? 'ON AIR · viewers see this' : 'ON AIR · nothing playing'}
         </span>

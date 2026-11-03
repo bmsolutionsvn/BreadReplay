@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -7,11 +8,13 @@
 
 #include "core/timecode.h"
 #include "engine/engine.h"
+#include "engine/surface_hub.h"
 #include "events/show_file.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
 #include "io/ffmpeg_input.h"
+#include "support/requires.h"
 #include "support/temp_dir.h"
 #include "support/test_media.h"
 
@@ -143,4 +146,79 @@ TEST_CASE("Engine: a Preview restored with an angle but no position follows the 
   engine.stop();
   CHECK(pv.angle == "cam1");
   CHECK(std::llabs(pv.posUs - newest) <= 1'000'000);
+}
+
+TEST_CASE("Engine: no binary preview without a wantPreviews client") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(1), f.dir.path / "show");
+  std::atomic<int> binary{0};
+  engine.setSender([](const std::string&) {},
+                   [&](const std::vector<uint8_t>&) { binary.fetch_add(1); });
+  engine.setBinaryWanted([] { return false; });
+  engine.start();
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam0"); return s && s->frameCount() > 10; }, 20000));
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  const int count = binary.load();
+  engine.stop();
+  CHECK(count == 0);
+}
+
+TEST_CASE("Engine: binary previews resume for a fallback client") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(1), f.dir.path / "show");
+  std::atomic<bool> wanted{false};
+  std::atomic<int> previews{0};
+  engine.setSender([](const std::string&) {}, [&](const std::vector<uint8_t>& d) {
+    if (!d.empty() && d[0] == 1) previews.fetch_add(1);  // the preview message's tag
+  });
+  engine.setBinaryWanted([&] { return wanted.load(); });
+  engine.start();
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam0"); return s && s->frameCount() > 10; }, 20000));
+  wanted = true;
+  const bool got = f.waitFor([&] { return previews.load() > 0; }, 500);
+  engine.stop();
+  CHECK(got);
+}
+
+TEST_CASE("Engine: presents to wanted surfaces" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(1), f.dir.path / "show");
+  bc::SurfaceHub hub(*f.gpu, f.conv);
+  REQUIRE(hub.subscribe("c", {{"preview", 320, 180}, {"output", 320, 180}}).size() == 2);
+  engine.setSurfaces(&hub);
+  engine.setBinaryWanted([] { return false; });
+  engine.setSender([](const std::string&) {}, [](const std::vector<uint8_t>&) {});
+  engine.start();
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam0"); return s && s->frameCount() > 10; }, 20000));
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const bool broken = hub.anyBroken();
+  engine.stop();
+  CHECK_FALSE(broken);
+}
+
+TEST_CASE("Engine: output with nothing on air presents nothing and does not throw" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(1), f.dir.path / "show");
+  bc::SurfaceHub hub(*f.gpu, f.conv);
+  REQUIRE(hub.subscribe("c", {{"output", 320, 180}}).size() == 1);
+  engine.setSurfaces(&hub);
+  engine.setBinaryWanted([] { return false; });
+  engine.setSender([](const std::string&) {}, [](const std::vector<uint8_t>&) {});
+  engine.start();
+  REQUIRE(f.waitFor([&] { const auto* s = engine.store("cam0"); return s && s->frameCount() > 10; }, 20000));
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const bool broken = hub.anyBroken();
+  engine.stop();
+  CHECK_FALSE(broken);
+}
+
+TEST_CASE("Engine: statusJson reports nativeVideo") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(0), f.dir.path / "show");
+  CHECK(engine.statusJson()["nativeVideo"].is_string());
+  engine.setNativeVideoReason("no swap chain");
+  CHECK(engine.statusJson()["nativeVideo"] == "no swap chain");
+  bc::SurfaceHub hub(*f.gpu, f.conv);
+  engine.setSurfaces(&hub);
+  CHECK(engine.statusJson()["nativeVideo"] == true);
 }
