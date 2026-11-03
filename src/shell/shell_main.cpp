@@ -45,6 +45,8 @@ struct App {
   std::unique_ptr<bc::Supervisor> supervisor;
   ix::WebSocket ws;
   std::atomic<bool> quitting{false};
+  // The engine's latest status: Close only asks while recording.
+  std::atomic<bool> recording{false};
   std::thread worker;
   // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47820 failed to bind).
   int port = 38820;
@@ -75,9 +77,13 @@ void quitAll() {
   DestroyWindow(g.hwnd);
 }
 
-// The X, Alt+F4 and taskbar Close ask first; the window never hides to a tray.
+// The X, Alt+F4 and taskbar Close ask only while recording (owner, 2026-11-03); otherwise they quit.
 void confirmQuit() {
   if (g.quitting) return;
+  if (!g.recording) {
+    quitAll();
+    return;
+  }
   showWindow();
   TASKDIALOGCONFIG cfg{sizeof(cfg)};
   cfg.hwndParent = g.hwnd;
@@ -300,6 +306,9 @@ void startEngineSupervision() {
     try {
       // The engine echoes no request id, so any successful reply proves liveness.
       auto j = nlohmann::json::parse(m->str);
+      if (j.value("type", std::string{}) == "status" && j.contains("recording") && j["recording"].is_boolean()) {
+        g.recording = j["recording"].get<bool>();
+      }
       if (br::isAliveReply(j)) g.supervisor->heartbeat(std::chrono::steady_clock::now());
     } catch (...) {
     }
