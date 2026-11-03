@@ -5,15 +5,17 @@ import type { Status } from '../api/types';
 import { useContextMenu } from '../ContextMenu';
 import { signalHint } from '../format';
 import { keyLabel } from '../hotkeys';
+import { NativeVideo } from './NativeVideo';
 
 type Props = {
   status: Status | null;
   client: Pick<Client, 'send'> & Partial<Pick<Client, 'onAngleRow'>>;
   hotkeys?: Record<string, string>;
+  native?: boolean;
 };
 
 // Every input at Preview's timecode; click switches Preview's angle (spec §7).
-export function AngleRow({ status, client, hotkeys = {} }: Props) {
+export function AngleRow({ status, client, hotkeys = {}, native = false }: Props) {
   const menu = useContextMenu();
   const canvases = useRef<Array<HTMLCanvasElement | null>>([]);
   const preview = status?.players.preview;
@@ -67,7 +69,11 @@ export function AngleRow({ status, client, hotkeys = {} }: Props) {
               ])
             }
           >
-            <canvas ref={(el) => (canvases.current[i] = el)} aria-hidden="true" />
+            <NativeVideo
+              id={`angle:${input.id}`}
+              native={native}
+              fallback={<canvas ref={(el) => (canvases.current[i] = el)} aria-hidden="true" />}
+            />
             {i < 8 && <kbd className="slot">{keyLabel(`player.angle${i + 1}`, hotkeys)}</kbd>}
             <b>{input.name}</b>
             <small className={`st ${input.state}`} title={signalHint(input.state)}>

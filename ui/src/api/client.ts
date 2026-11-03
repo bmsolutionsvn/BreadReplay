@@ -17,6 +17,17 @@ export interface AngleFrame {
   bgra: Uint8Array;
 }
 
+export interface SurfaceRequest {
+  id: string;
+  w: number;
+  h: number;
+}
+
+export interface SurfaceReply {
+  pid: number;
+  surfaces: { id: string; handle: string; w: number; h: number }[];
+}
+
 type Pending = { cmd: Command; resolve: (r: Reply) => void; reject: (e: Error) => void };
 
 // One WebSocket to the engine; reconnects every second while the engine restarts.
@@ -32,6 +43,9 @@ export class Client {
   private eventListeners = new Set<(e: EventStore) => void>();
   private previewListeners = new Map<string, Set<(f: PreviewFrame) => void>>();
   private angleListeners = new Set<(f: AngleFrame) => void>();
+  private surfaceListeners = new Set<(r: SurfaceReply) => void>();
+  private surfaceSub: SurfaceRequest[] | null = null;
+  private fallbackPreviews = false;
 
   constructor(
     private url: string,
@@ -43,7 +57,12 @@ export class Client {
   private open() {
     const ws = this.wsFactory(this.url);
     ws.binaryType = 'arraybuffer';
-    ws.onopen = () => this.pump();
+    ws.onopen = () => {
+      // Sent through the queue: the engine answers on the same socket and sends no ids.
+      if (this.fallbackPreviews) void this.send({ cmd: 'wantPreviews' }).catch(() => {});
+      if (this.surfaceSub) void this.subscribeSurfaces(this.surfaceSub).catch(() => {});
+      this.pump();
+    };
     ws.onmessage = (e) => this.onMessage(e.data);
     ws.onclose = () => {
       const err = new Error('disconnected from the engine');
@@ -95,6 +114,28 @@ export class Client {
   onAngleRow(fn: (f: AngleFrame) => void) {
     this.angleListeners.add(fn);
     return () => this.angleListeners.delete(fn);
+  }
+
+  // The registry re-subscribes on every reconnect so the shell gets the new engine's pid and handles.
+  onSurfaces(fn: (r: SurfaceReply) => void) {
+    this.surfaceListeners.add(fn);
+    return () => this.surfaceListeners.delete(fn);
+  }
+
+  subscribeSurfaces(surfaces: SurfaceRequest[]): Promise<SurfaceReply> {
+    this.surfaceSub = surfaces;
+    return this.send({ cmd: 'subscribeSurfaces', surfaces }).then((r) => {
+      if (!r.ok) throw new Error(r.error);
+      const reply = { pid: r.pid as number, surfaces: r.surfaces as SurfaceReply['surfaces'] };
+      for (const fn of this.surfaceListeners) fn(reply);
+      return reply;
+    });
+  }
+
+  // Fallback mode: H.264/raw pictures for this page, now and after every reconnect.
+  wantPreviews(): Promise<Reply> {
+    this.fallbackPreviews = true;
+    return this.send({ cmd: 'wantPreviews' });
   }
 
   private onMessage(data: unknown) {
