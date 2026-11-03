@@ -81,8 +81,14 @@ void OutputPlayer::submit(bc::TextureRef pic, const TickResult& tr, bool angleCh
   frame.rate = settings_.rate;
   frame.linear = pic;
   bool needCpu = false;
-  for (const auto& o : outs_) needCpu = needCpu || o->needsCpu();
+  bool needGpu = false;
+  for (const auto& o : outs_) {
+    needCpu = needCpu || o->needsCpu();
+    needGpu = needGpu || o->wantsGpuRgba8();
+  }
   if (needCpu && pic) frame.bgra = std::make_shared<const bc::CpuImage>(renderer_.toCpu(pic));
+  // The GPU frame, made once per tick and only when an output pulls it (the Output contract).
+  if (needGpu && pic) frame.rgba8 = renderer_.toRgba8(pic);
 
   const bc::TickSchedule schedule(settings_.rate);
   const uint32_t samples = schedule.audioFramesForTick(frame.tick, 48000);
@@ -92,7 +98,13 @@ void OutputPlayer::submit(bc::TextureRef pic, const TickResult& tr, bool angleCh
   frame.sampleRate = 48000;
   frame.channels = 2;
 
-  for (auto& o : outs_) o->submit(frame);
+  // Each output gets only the picture it asked for, as BreadCamera's Camera::endTick does.
+  for (auto& o : outs_) {
+    bc::OutFrame forOut = frame;
+    if (!o->needsCpu()) forOut.bgra.reset();
+    if (!o->wantsGpuRgba8()) forOut.rgba8 = nullptr;
+    o->submit(std::move(forOut));
+  }
 }
 
 void OutputPlayer::tickOnce() {

@@ -70,6 +70,11 @@ bc::CpuImage Renderer::toCpu(const bc::TextureRef& linear) {
   return conv_.readback(*bgra);
 }
 
+bc::TextureRef Renderer::toRgba8(const bc::TextureRef& linear) {
+  if (!linear) return {};
+  return conv_.toBgra8(*linear, outW_, outH_, /*swapRb=*/false);
+}
+
 bc::TextureRef Renderer::slate(const std::string& imagePath) {
   if (!imagePath.empty()) {
     try {
