@@ -18,6 +18,7 @@ class Renderer {
   bc::TextureRef mix(const bc::TextureRef& a, const bc::TextureRef& b, float t);  // t=0 -> a
   bc::TextureRef slate(const std::string& imagePath);  // black when path empty/unreadable
   bc::CpuImage toCpu(const bc::TextureRef& linear);    // BGRA8 readback at outW x outH
+  bc::TextureRef toRgba8(const bc::TextureRef& linear);  // R8G8B8A8_UNORM, true RGBA, outW x outH
   uint32_t outW() const { return outW_; }
   uint32_t outH() const { return outH_; }
 
