@@ -27,6 +27,7 @@
 
 namespace bc {
 class PreviewEncoder;
+class SurfaceHub;
 }
 
 namespace br {
@@ -84,6 +85,9 @@ class Engine {
   nlohmann::json handle(const nlohmann::json& cmd);
 
   void setSender(std::function<void(const std::string&)> text, std::function<void(const std::vector<uint8_t>&)> binary);
+  void setSurfaces(bc::SurfaceHub* hub);                     // null = native video off
+  void setBinaryWanted(std::function<bool()> fn);             // true while any client sent wantPreviews
+  void setNativeVideoReason(std::string reason);              // statusJson's reason when surfaces are off
 
   // For tests and the current-list highlight.
   OutputPlayer* outputPlayer() { return outputPlayer_.get(); }
@@ -150,6 +154,9 @@ class Engine {
   std::thread previewThread_, retentionThread_, statusThread_;
   std::function<void(const std::string&)> sendText_;
   std::function<void(const std::vector<uint8_t>&)> sendBinary_;
+  bc::SurfaceHub* surfaces_ = nullptr;
+  std::function<bool()> binaryWanted_;
+  std::string nativeReason_;
   WriteRateMeter writeMeter_;
   int64_t lastBytes_ = 0;
   int64_t lastRetentionUs_ = 0;

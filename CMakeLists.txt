@@ -63,6 +63,7 @@ add_library(br_engine STATIC
   "${BR_BREADCAMERA_DIR}/src/engine/adapter_factory.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_encoder.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/preview_hub.cpp"
+  "${BR_BREADCAMERA_DIR}/src/engine/surface_hub.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/control_server.cpp"
   "${BR_BREADCAMERA_DIR}/src/engine/chart_detector.cpp"
 )

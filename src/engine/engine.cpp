@@ -13,6 +13,7 @@
 #include "engine/adapter_factory.h"
 #include "engine/command_router.h"
 #include "engine/preview_encoder.h"
+#include "engine/surface_hub.h"
 #include "play/audio_follow.h"
 
 namespace br {
@@ -109,12 +110,8 @@ void Engine::start() {
   outputPlayer_->start();
   recordStart();
 
-  try {
-    previewEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
-    outputEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
-  } catch (const std::exception&) {
-    // no H.264 encoder: the UI still gets status and control, just no pictures
-  }
+  // The H.264 encoders open lazily on the first fallback client (previewLoop); native video
+  // needs none.
   previewThread_ = std::thread([this] { previewLoop(); });
   retentionThread_ = std::thread([this] { retentionLoop(); });
   statusThread_ = std::thread([this] { statusLoop(); });
@@ -340,6 +337,21 @@ void Engine::setSender(std::function<void(const std::string&)> text,
   sendBinary_ = std::move(binary);
 }
 
+void Engine::setSurfaces(bc::SurfaceHub* hub) {
+  std::lock_guard lock(m_);
+  surfaces_ = hub;
+}
+
+void Engine::setBinaryWanted(std::function<bool()> fn) {
+  std::lock_guard lock(m_);
+  binaryWanted_ = std::move(fn);
+}
+
+void Engine::setNativeVideoReason(std::string reason) {
+  std::lock_guard lock(m_);
+  nativeReason_ = std::move(reason);
+}
+
 nlohmann::json Engine::statusJson() {
   std::lock_guard lock(m_);
   nlohmann::json j;
@@ -403,6 +415,8 @@ nlohmann::json Engine::statusJson() {
   }
   j["players"] = players;
   j["events"] = {{"version", show_.events.version()}};
+  j["nativeVideo"] = surfaces_ ? nlohmann::json(true)
+                               : nlohmann::json(nativeReason_.empty() ? "native video is off" : nativeReason_);
   return j;
 }
 
@@ -481,49 +495,78 @@ void Engine::previewLoop() {
     next += frameTime;
     std::this_thread::sleep_until(next);
     if (!running_) break;
+    // A fallback client asked for H.264/raw pictures; no client means the encoders stay closed.
+    const bool wantBinary = binaryWanted_ && binaryWanted_();
+    if (!wantBinary) {
+      previewEncoder_.reset();
+      outputEncoder_.reset();
+    }
     guarded("preview", [&] {
       if (!previewPlayer_) return;
       followLiveEdge();
-      // The playhead moves even without an H.264 encoder; only the pictures need one.
+      // The playhead moves even without a picture; only the encode needs an encoder.
       const TickResult tr = previewPlayer_->tick();
-      if (source_ && previewEncoder_ && previewRenderer_ && sendBinary_) {
-        if (auto frame = source_->get(tr.inputId, tr.sourceUs)) {
-          const auto pic = previewRenderer_->render(*frame, tr.zoom);
-          const auto cpu = previewRenderer_->toCpu(pic);
-          for (const auto& p : previewEncoder_->encode(cpu, tr.sourceUs)) {
-            sendBinary_(bc::encodePreviewMessage("preview", p));
-          }
-        }
+      if (!source_ || !previewRenderer_) return;
+      const auto frame = source_->get(tr.inputId, tr.sourceUs);
+      if (!frame) return;
+      const auto pic = previewRenderer_->render(*frame, tr.zoom);
+      if (surfaces_ && surfaces_->wanted().contains("preview")) surfaces_->present("preview", *pic);
+      if (!wantBinary || !sendBinary_) return;
+      if (!previewEncoder_) previewEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+      const auto cpu = previewRenderer_->toCpu(pic);
+      for (const auto& p : previewEncoder_->encode(cpu, tr.sourceUs)) {
+        sendBinary_(bc::encodePreviewMessage("preview", p));
       }
     });
     guarded("output", [&] {
-      if (outputPlayer_ && outputEncoder_ && deps_.conv && sendBinary_) {
-        if (const auto pic = outputPlayer_->lastPicture()) {
-          const auto bgra = deps_.conv->toBgra8(*pic, kPreviewWidth, kPreviewHeight);
-          const auto cpu = deps_.conv->readback(*bgra);
-          for (const auto& p : outputEncoder_->encode(cpu, now())) {
-            sendBinary_(bc::encodePreviewMessage("output", p));
-          }
-        }
+      if (!outputPlayer_) return;
+      const auto pic = outputPlayer_->lastPicture();
+      if (!pic) return;
+      if (surfaces_ && surfaces_->wanted().contains("output")) surfaces_->present("output", *pic);
+      if (!wantBinary || !deps_.conv || !sendBinary_) return;
+      if (!outputEncoder_) outputEncoder_ = std::make_unique<bc::PreviewEncoder>(kPreviewWidth, kPreviewHeight, 30);
+      const auto bgra = deps_.conv->toBgra8(*pic, kPreviewWidth, kPreviewHeight);
+      const auto cpu = deps_.conv->readback(*bgra);
+      for (const auto& p : outputEncoder_->encode(cpu, now())) {
+        sendBinary_(bc::encodePreviewMessage("output", p));
       }
     });
     guarded("angles", [&] {
-      if (angleTick++ % 3 == 0 && source_ && sendBinary_ && previewPlayer_) {
-        const int64_t at = previewPlayer_->state().posUs;
-        std::vector<std::string> ids;
-        {
-          std::unique_lock cmdLock(cmdM_, std::try_to_lock);
-          if (cmdLock.owns_lock()) {
-            ids.clear();
-            for (const auto& in : show_.inputs) ids.push_back(in.id);
-            angleIds = ids;
-          } else {
-            ids = angleIds;
-          }
+      if (!source_ || !previewPlayer_) return;
+      // Native angle tiles update every tick; the raw BRAP message keeps today's every-3rd-tick
+      // rate for fallback clients.
+      const bool fallbackTick = wantBinary && sendBinary_ && angleTick % 3 == 0;
+      ++angleTick;
+      const std::set<std::string> wanted = surfaces_ ? surfaces_->wanted() : std::set<std::string>{};
+      bool anyNative = false;
+      for (const auto& id : wanted) {
+        if (id.rfind("angle:", 0) == 0) {
+          anyNative = true;
+          break;
         }
-        uint32_t index = 0;
-        for (const auto& id : ids) {
-          if (const auto img = source_->preview(id, at)) {
+      }
+      if (!anyNative && !fallbackTick) return;
+      const int64_t at = previewPlayer_->state().posUs;
+      std::vector<std::string> ids;
+      {
+        std::unique_lock cmdLock(cmdM_, std::try_to_lock);
+        if (cmdLock.owns_lock()) {
+          ids.clear();
+          for (const auto& in : show_.inputs) ids.push_back(in.id);
+          angleIds = ids;
+        } else {
+          ids = angleIds;
+        }
+      }
+      uint32_t index = 0;
+      for (const auto& id : ids) {
+        if (const auto img = source_->preview(id, at)) {
+          if (anyNative && deps_.conv && wanted.contains("angle:" + id)) {
+            const auto tex = deps_.conv->uploadBgra8(img->bgra.data(), img->w, img->h, img->w * 4);
+            const auto linear = deps_.conv->toLinear(*tex, bc::PixelLayout::BGRA8, true);
+            surfaces_->present("angle:" + id, *linear);
+          }
+          if (fallbackTick) {
             std::vector<uint8_t> msg(16);
             msg[0] = 'B';
             msg[1] = 'R';
@@ -535,8 +578,8 @@ void Engine::previewLoop() {
             msg.insert(msg.end(), img->bgra.begin(), img->bgra.end());
             sendBinary_(msg);
           }
-          ++index;
         }
+        ++index;
       }
     });
   }

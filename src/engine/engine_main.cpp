@@ -4,6 +4,7 @@
 #include <ixwebsocket/IXNetSystem.h>
 
 #include <atomic>
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -19,8 +21,10 @@
 #include "engine/adapter_factory.h"
 #include "engine/control_server.h"
 #include "engine/engine.h"
+#include "engine/surface_hub.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
+#include "gpu/surface_presenter.h"
 #include "gpu/texture_pool.h"
 #include "io/ffmpeg_input.h"
 #include "shell/engine_discovery.h"
@@ -78,6 +82,11 @@ int wmain(int argc, wchar_t** argv) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
+  // Native video's start-up self-test (spec §4.3): one 16x16 surface, presented once. Status is
+  // true when it works, otherwise the reason the page shows before it falls back.
+  std::string nativeWhy;
+  const bool nativeOk = bc::SurfacePresenter::available(*gpu, conv, &nativeWhy);
+  bc::SurfaceHub surfaces(*gpu, conv);
 
   std::filesystem::create_directories(showDir);
   br::Show show;
@@ -117,11 +126,18 @@ int wmain(int argc, wchar_t** argv) {
 
   std::mutex clientsMutex;
   std::set<bc::ClientId> clients;
+  std::set<bc::ClientId> binaryClients;
+  engine.setSurfaces(nativeOk ? &surfaces : nullptr);
+  engine.setNativeVideoReason(nativeOk ? std::string{} : nativeWhy);
+  engine.setBinaryWanted([&] {
+    std::lock_guard lock(clientsMutex);
+    return !binaryClients.empty();
+  });
   engine.setSender(
       [&](const std::string& text) { server.broadcast(text); },
       [&](const std::vector<uint8_t>& data) {
         std::lock_guard lock(clientsMutex);
-        for (const auto& id : clients) server.sendBinary(id, data);
+        for (const auto& id : binaryClients) server.sendBinary(id, data);
       });
 
   server.setHandlers({
@@ -139,12 +155,56 @@ int wmain(int argc, wchar_t** argv) {
         server.send(id, e.dump());
       },
       [&](const bc::ClientId& id) {
-        std::lock_guard lock(clientsMutex);
-        clients.erase(id);
+        {
+          std::lock_guard lock(clientsMutex);
+          clients.erase(id);
+          binaryClients.erase(id);
+        }
+        surfaces.dropClient(id);
       },
-      [&](const bc::ClientId&, const std::string& text) {
+      [&](const bc::ClientId& id, const std::string& text) {
         try {
-          return engine.handle(nlohmann::json::parse(text)).dump();
+          const auto cmd = nlohmann::json::parse(text);
+          const std::string name = cmd.value("cmd", std::string{});
+          // These two need the client id, so they cannot go through CommandRouter.
+          if (name == "subscribeSurfaces") {
+            if (!cmd.contains("surfaces") || !cmd["surfaces"].is_array())
+              return nlohmann::json{{"ok", false}, {"error", "surfaces must be a list"}}.dump();
+            if (cmd["surfaces"].size() > 64)
+              return nlohmann::json{{"ok", false}, {"error", "at most 64 surfaces can be subscribed"}}.dump();
+            std::vector<bc::SurfaceRequest> wanted;
+            for (const auto& v : cmd["surfaces"]) {
+              if (!v.is_object()) return nlohmann::json{{"ok", false}, {"error", "each surface must be an object"}}.dump();
+              if (!v.contains("id") || !v["id"].is_string())
+                return nlohmann::json{{"ok", false}, {"error", "id must be text"}}.dump();
+              auto size = [&](const char* key) {
+                if (!v.contains(key) || !v[key].is_number_integer())
+                  return std::pair<bool, uint32_t>{false, 0};
+                const long long n = v[key].get<long long>();
+                if (n < 0) return std::pair<bool, uint32_t>{false, 0};
+                return std::pair<bool, uint32_t>{true, static_cast<uint32_t>(std::min<long long>(n, 4096))};
+              };
+              const auto [wOk, w] = size("w");
+              const auto [hOk, h] = size("h");
+              if (!wOk || !hOk)
+                return nlohmann::json{{"ok", false}, {"error", "w and h must be whole numbers"}}.dump();
+              wanted.push_back({v["id"].get<std::string>(), w, h});
+            }
+            nlohmann::json out = nlohmann::json::array();
+            for (const auto& g : surfaces.subscribe(id, wanted)) {
+              out.push_back({{"id", g.id}, {"handle", std::to_string(g.handle)}, {"w", g.w}, {"h", g.h}});
+            }
+            return nlohmann::json{{"ok", true}, {"pid", GetCurrentProcessId()}, {"surfaces", out}}.dump();
+          }
+          if (name == "wantPreviews") {
+            {
+              std::lock_guard lock(clientsMutex);
+              binaryClients.insert(id);
+            }
+            engine.requestKeyframes();  // a second fallback window gets a picture at once
+            return nlohmann::json{{"ok", true}}.dump();
+          }
+          return engine.handle(cmd).dump();
         } catch (const std::exception& e) {
           return nlohmann::json{{"ok", false}, {"error", e.what()}}.dump();
         }
