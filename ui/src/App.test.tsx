@@ -32,6 +32,12 @@ const store = (ids: number[]): EventStore => ({
   events: ids.map(ev),
 });
 
+test('App: the title bar is the first element of the page', () => {
+  const { client } = fakeClient();
+  const { container } = render(<App client={client} />);
+  expect(container.querySelector('.app')!.firstElementChild).toHaveClass('titlebar');
+});
+
 test('App: a newly marked event becomes the selected one', () => {
   const { client, push } = fakeClient();
   render(<App client={client} />);
