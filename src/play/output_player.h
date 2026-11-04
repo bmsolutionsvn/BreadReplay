@@ -25,6 +25,7 @@ class OutputPlayer {
   OutputPlayer(Player& p, FrameSource& src, Renderer& r, EventStore& events, const ShowSettings& s);
   void setOutputs(std::vector<std::unique_ptr<bc::Output>> outs);
   void playHighlight(const std::string& listId);  // events in list order, Cut or Fade between
+  void playEvents(std::vector<int> ids);          // the given replays, in displayed order
   void tickOnce();                                // one show period
   void start();
   void stop();

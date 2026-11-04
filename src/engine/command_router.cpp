@@ -136,14 +136,17 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       const auto& settings = engine_.show().settings;
       const int64_t lastNUs = static_cast<int64_t>(
           cmd.value("n", settings.lastNSeconds) * 1'000'000.0);
+      const std::string inputId = markAngle();
       if (name == "mark.in") {
-        engine_.events().markIn(markTime(false), markAngle());
-      } else if (name == "mark.out") {
-        engine_.events().markOut(markTime(false), markAngle(), lastNUs);
-      } else {
-        engine_.events().lastN(engine_.newestTs(), lastNUs, markAngle());
+        Event& e = engine_.events().markIn(markTime(false), inputId);
+        return {{"ok", true}, {"id", e.id}, {"edge", "in"}, {"tUs", e.inUs}, {"inputId", inputId}};
       }
-      return {{"ok", true}};
+      if (name == "mark.out") {
+        Event& e = engine_.events().markOut(markTime(false), inputId, lastNUs);
+        return {{"ok", true}, {"id", e.id}, {"edge", "out"}, {"tUs", e.outUs}, {"inputId", inputId}};
+      }
+      Event& e = engine_.events().lastN(engine_.newestTs(), lastNUs, inputId);
+      return {{"ok", true}, {"id", e.id}, {"edge", "out"}, {"tUs", e.outUs}, {"inputId", inputId}};
     }
 
     if (name == "event.update") {
@@ -180,7 +183,21 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       engine_.events().clearCuts(cmd.value("id", 0));
       return {{"ok", true}};
     }
-    if (name == "list.new") return {{"ok", true}, {"id", engine_.events().newList(cmd.value("name", std::string("Game")))}};
+    if (name == "list.new") {
+      return {{"ok", true}, {"id", engine_.events().newList(cmd.value("name", std::string{}))}};
+    }
+    if (name == "list.rename") {
+      const auto name2 = cmd.value("name", std::string{});
+      if (name2.find_first_not_of(" \t\r\n") == std::string::npos)
+        return {{"ok", false}, {"error", "name is empty"}};
+      if (!engine_.events().renameList(cmd.value("id", std::string{}), name2))
+        return {{"ok", false}, {"error", "no such group"}};
+      return {{"ok", true}};
+    }
+    if (name == "list.delete") {
+      engine_.events().deleteList(cmd.value("id", std::string{}));
+      return {{"ok", true}};
+    }
     if (name == "list.select") {
       engine_.events().selectList(cmd.value("id", std::string{}));
       return {{"ok", true}};
@@ -189,9 +206,22 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       engine_.events().reorder(cmd.value("id", std::string{}), cmd.value("order", std::vector<int>{}));
       return {{"ok", true}};
     }
+    if (name == "event.move") {
+      const auto ids = cmd.value("ids", std::vector<int>{});
+      std::optional<int> beforeId;
+      if (cmd.contains("beforeId") && !cmd["beforeId"].is_null()) beforeId = cmd["beforeId"].get<int>();
+      engine_.events().moveEvents(ids, cmd.value("listId", std::string{}), beforeId);
+      return {{"ok", true}};
+    }
     if (name == "highlight.play") {
       if (!engine_.outputPlayer()) return {{"ok", false}, {"error", "the output player is not running"}};
-      engine_.outputPlayer()->playHighlight(cmd.value("listId", std::string{}));
+      if (cmd.contains("ids")) {
+        engine_.outputPlayer()->playEvents(cmd.value("ids", std::vector<int>{}));
+      } else if (cmd.contains("listId")) {
+        engine_.outputPlayer()->playHighlight(cmd.value("listId", std::string{}));
+      } else {
+        engine_.outputPlayer()->playHighlight(engine_.events().currentList());
+      }
       return {{"ok", true}};
     }
 

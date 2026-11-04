@@ -83,6 +83,30 @@ TEST_CASE("Router: marks use Preview's time when it is reviewing") {
   CHECK(f.engine->events().events().front().inUs == at);
 }
 
+TEST_CASE("Router: group commands create, rename, move and delete") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int a = r.handle({{"cmd", "mark.lastN"}, {"n", 1}})["id"];
+  const std::string g = r.handle({{"cmd", "list.new"}})["id"];
+  CHECK(f.engine->events().lists()[0].name == "Game 1");
+  CHECK(r.handle({{"cmd", "list.rename"}, {"id", g}, {"name", ""}})["error"] == "name is empty");
+  CHECK(r.handle({{"cmd", "list.rename"}, {"id", g}, {"name", "Final"}})["ok"] == true);
+  r.handle({{"cmd", "event.move"}, {"ids", {a}}, {"listId", g}});
+  CHECK(f.engine->events().orderOf(g) == std::vector<int>{a});
+  r.handle({{"cmd", "list.delete"}, {"id", g}});
+  CHECK(f.engine->events().orderOf("") == std::vector<int>{a});
+}
+
+TEST_CASE("Router: a mark replies with the camera and time it used") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const auto res = r.handle({{"cmd", "mark.lastN"}, {"n", 2}});
+  CHECK(res["ok"] == true);
+  CHECK(res["edge"] == "out");
+  CHECK(res["inputId"] == "cam1");
+  CHECK(res["tUs"].get<int64_t>() == f.engine->events().find(res["id"])->outUs);
+}
+
 TEST_CASE("Router: take copies Preview to Output and plays it") {
   Fixture f;
   REQUIRE(f.engine->newestTs() > 0);
