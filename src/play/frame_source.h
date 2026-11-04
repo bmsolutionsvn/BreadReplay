@@ -71,7 +71,7 @@ class FrameSource {
   std::shared_ptr<const DecodedFrame> getCompressed(const std::string& id, const InputStore& store,
                                                     const FrameRef& ref, size_t lane);
   void cachePicture(const std::string& id, const InputStore& store, bc::VideoFrameIn pic, uint32_t w,
-                    uint32_t h);
+                    uint32_t h, int64_t slotTs);
   static size_t bytesOf(const DecodedFrame& f);
   void evict();
   void touch(const Key& key);

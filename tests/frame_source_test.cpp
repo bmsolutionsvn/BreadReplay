@@ -321,7 +321,7 @@ TEST_CASE("FrameSource: the frame cache is per input") {
   CHECK(src.diskReads() == before);  // b's frames must not evict a's
 }
 
-TEST_CASE("FrameSource: a long-GOP H.264 recording decodes on the GPU with seek and cache"
+TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
           BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
   if (!gpu) return;
@@ -333,64 +333,74 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording decodes on the GPU with seek 
   for (size_t i = 1; i < enc.pts.size(); ++i) reordered = reordered || enc.pts[i] < enc.pts[i - 1];
   MESSAGE("encoder: " << enc.encoder << ", packets: " << enc.aus.size() << ", B-frames: " << reordered);
   REQUIRE(enc.aus.size() == 90);
+  if (enc.encoder == "h264_amf") REQUIRE(reordered);  // the AMF path is what exercises reordering
 
   const auto ref = referenceY(enc);
   REQUIRE(ref.size() == 90);
 
-  // Every access unit is stored with an arrival timestamp; the bitstream's own pts still reorders.
+  const auto record = [&](bc::test::TempDir& dir, bool keepSourcePts) {
+    br::SegmentHeader header;
+    header.inputId = "cam1";
+    header.width = enc.w;
+    header.height = enc.h;
+    header.rate = bc::Rate{30, 1};
+    auto store = std::make_unique<br::InputStore>(dir.path, header);
+    br::Recorder rec(*store, br::VmxQuality::SQ, 512, 1);
+    for (size_t i = 0; i < enc.aus.size(); ++i) {
+      const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+      const int64_t src = keepSourcePts ? kBase + enc.pts[i] * 33333 : ts;
+      rec.pushCodedAu(ts, src, br::StoredCodec::H264, enc.w, enc.h, enc.key[i], enc.aus[i]);
+    }
+    for (int i = 0; i < 400 && rec.stats().framesWritten < enc.aus.size(); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(rec.stats().framesWritten == enc.aus.size());
+    rec.stop();
+    return store;
+  };
+
+  // The worst luma difference for a slot, or a value above the 2 bound when it is not that picture.
+  const auto slotWorst = [&](br::FrameSource& s, int slot, int64_t display) {
+    const int64_t ts = kBase + static_cast<int64_t>(slot) * 33333;
+    const auto f = s.get("cam1", ts);
+    if (!f || !f->picture.tex || f->tsUs != ts) return 1000;
+    const auto y = readLuma(*gpu, *f);
+    const auto& want = ref.at(display);
+    if (y.size() != want.size()) return 1001;
+    int worst = 0;
+    for (size_t i = 0; i < y.size(); ++i) {
+      worst = std::max(worst, std::abs(static_cast<int>(y[i]) - want[i]));
+    }
+    return worst;
+  };
+
+  // Review focus 1: every slot shows the picture whose display pts is that slot, in forward playback.
   bc::test::TempDir dir;
-  br::SegmentHeader header;
-  header.inputId = "cam1";
-  header.width = enc.w;
-  header.height = enc.h;
-  header.rate = bc::Rate{30, 1};
-  br::InputStore store(dir.path, header);
-  br::Recorder rec(store, br::VmxQuality::SQ, 512, 1);
-  for (size_t i = 0; i < enc.aus.size(); ++i) {
-    const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
-    rec.pushCodedAu(ts, ts, br::StoredCodec::H264, enc.w, enc.h, enc.key[i], enc.aus[i]);
-  }
-  for (int i = 0; i < 400 && rec.stats().framesWritten < enc.aus.size(); ++i) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  REQUIRE(rec.stats().framesWritten == enc.aus.size());
-  rec.stop();
+  auto store = record(dir, true);
+  br::FrameSource src({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  for (int i = 0; i < 90; ++i) CHECK(slotWorst(src, i, i) <= 2);
 
-  // Review focus 1: the picture at a cue equals the reference decode of that frame (AU 47).
-  br::FrameSource src({{"cam1", &store}}, gpu.get(), &pool, 1, 64);
-  const int64_t ts47 = kBase + 47 * 33333;
-  const auto f47 = src.get("cam1", ts47);
-  REQUIRE(f47);
-  REQUIRE(f47->picture.tex);
-  CHECK(f47->tsUs == ts47);
-  const auto y47 = readLuma(*gpu, *f47);
-  const auto& want47 = ref.at(enc.pts[47]);
-  REQUIRE(y47.size() == want47.size());
-  int worst = 0;
-  for (size_t i = 0; i < y47.size(); ++i) worst = std::max(worst, std::abs(static_cast<int>(y47[i]) - want47[i]));
-  CHECK(worst <= 2);
+  // A cold cue at 47, then stepping backwards, also shows display order.
+  br::FrameSource cold({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  CHECK(slotWorst(cold, 47, 47) <= 2);
+  const auto beforeForward = cold.decodes();
+  for (int i = 48; i <= 52; ++i) CHECK(slotWorst(cold, i, i) <= 2);
+  CHECK(cold.decodes() - beforeForward <= 20);
+  CHECK(slotWorst(cold, 59, 59) <= 2);
+  const auto before = cold.decodes();
+  for (int i = 58; i >= 31; --i) CHECK(slotWorst(cold, i, i) <= 2);
+  CHECK(cold.decodes() - before <= 60);
 
-  // Forward playback after a B-frame seek continues the decoder instead of re-seeking.
-  const auto beforeForward = src.decodes();
-  for (int i = 48; i <= 52; ++i) {
-    const auto f = src.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
-    REQUIRE(f);
-    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  // Review focus 2: a recording whose source pts are its arrival times keeps decode order.
+  bc::test::TempDir flatDir;
+  auto flat = record(flatDir, false);
+  br::FrameSource plain({{"cam1", flat.get()}}, gpu.get(), &pool, 1, 64);
+  for (int i = 0; i < 90; ++i) {
+    CHECK(slotWorst(plain, i, enc.pts[static_cast<size_t>(i)]) <= 2);
   }
-  CHECK(src.decodes() - beforeForward <= 20);
-
-  // Review focus 2: stepping back from 59 to 31 after the first seek stays in the cache.
-  const auto f59 = src.get("cam1", kBase + 59 * 33333);
-  REQUIRE(f59);
-  const auto before = src.decodes();
-  for (int i = 58; i >= 31; --i) {
-    const auto f = src.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
-    REQUIRE(f);
-    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
-  }
-  CHECK(src.decodes() - before <= 60);
 
   // Review focus 3: a preview is the keyframe's picture at the VMX preview size.
+  const int64_t ts47 = kBase + 47 * 33333;
   const auto p = src.preview("cam1", ts47);
   REQUIRE(p);
   const auto ps = br::VmxDecoder::previewSize(enc.w, enc.h);

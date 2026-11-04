@@ -1,5 +1,7 @@
 #include "play/frame_source.h"
 
+#include <deque>
+
 namespace br {
 namespace {
 constexpr size_t kCacheBytesTotal = 1ull << 30;  // 1 GB of NV12 across every input
@@ -136,10 +138,10 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
 }
 
 void FrameSource::cachePicture(const std::string& id, const InputStore& store, bc::VideoFrameIn pic,
-                               uint32_t w, uint32_t h) {
+                               uint32_t w, uint32_t h, int64_t slotTs) {
   if (!pic.tex) return;
   ++decodes_;
-  const int64_t ts = pic.ptsUs;
+  const int64_t ts = slotTs;
   const Key key{id, ts};
   if (cache_.count(key)) return;
 
@@ -177,12 +179,43 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   const size_t count = store.frameCountIn(seg);
 
   const auto feed = [&](size_t start) {
-    for (size_t i = start; i < count; ++i) {
+    // Within one GOP the r-th picture in display order takes the r-th arrival slot.
+    std::map<int64_t, std::deque<int64_t>> slots;
+    {
+      const size_t gopEnd = std::min(count, store.nextKeyframeAfter(*k));
+      std::vector<std::pair<int64_t, size_t>> order;  // (source pts, decode index)
+      order.reserve(gopEnd > k->index ? gopEnd - k->index : 0);
+      for (size_t i = k->index; i < gopEnd; ++i) {
+        const auto fr = store.frameAt(seg, i);
+        if (!fr) break;
+        order.emplace_back(store.srcPtsOf(*fr), i);
+      }
+      std::sort(order.begin(), order.end());
+      for (size_t r = 0; r < order.size(); ++r) {
+        const auto slot = store.frameAt(seg, k->index + r);
+        if (!slot) break;
+        slots[order[r].first].push_back(slot->tsUs);
+      }
+    }
+    // A repeated source pts (a broken source) takes the slots in decode order, one per picture.
+    const auto takeSlot = [&slots](int64_t pts) -> int64_t {
+      const auto it = slots.find(pts);
+      if (it == slots.end() || it->second.empty()) return INT64_MIN;
+      const int64_t ts = it->second.front();
+      it->second.pop_front();
+      return ts;
+    };
+
+    size_t i = start;
+    for (; i < count; ++i) {
       const auto fr = store.frameAt(seg, i);
       if (!fr) break;
       const auto au = store.readVideo(*fr, false);
       if (au.empty()) break;
-      d.hx->decode(au, fr->tsUs, [&](bc::VideoFrameIn pic) { cachePicture(id, store, std::move(pic), w, h); });
+      d.hx->decode(au, store.srcPtsOf(*fr), [&](bc::VideoFrameIn pic) {
+        const int64_t slot = takeSlot(pic.ptsUs);
+        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot);
+      });
       d.primed = true;
       d.seg = seg;
       d.fedIndex = i;
@@ -190,6 +223,14 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       if (cache_.count(want)) return true;
       // A B-frame's picture comes out after the references that follow it; feed on until it does.
       if (i > ref.index + 16) break;
+    }
+    if (i == count) {
+      // The last pictures of the segment sit in the decoder until it is drained.
+      d.hx->flush([&](bc::VideoFrameIn pic) {
+        const int64_t slot = takeSlot(pic.ptsUs);
+        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot);
+      });
+      d.primed = false;
     }
     return cache_.count(want) != 0;
   };
