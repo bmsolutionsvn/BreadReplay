@@ -8,6 +8,7 @@ extern "C" {
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -250,6 +251,13 @@ TEST_CASE("Export: a replay with cuts, speed and a fade exports frame-accurate"
   REQUIRE(state.state == "done");
   CHECK(state.error.empty());
   CHECK_FALSE(std::filesystem::exists(final.string() + ".part"));
+  if (const char* keep = std::getenv("BR_KEEP_EXPORT"); keep && *keep) {
+    std::error_code ec;
+    std::filesystem::create_directories(keep, ec);
+    std::filesystem::copy_file(final, std::filesystem::path(keep) / "frame-accurate.mp4",
+                               std::filesystem::copy_options::overwrite_existing, ec);
+    CHECK_FALSE(ec);
+  }
 
   const auto got = exportColours(final);
   CHECK(got.size() == reference.size());
