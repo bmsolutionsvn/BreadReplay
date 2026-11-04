@@ -124,11 +124,16 @@ size_t InputStore::frameCountIn(size_t segment) const {
   return segment < segs_.size() ? segs_[segment].times.size() : 0;
 }
 
+bool InputStore::isWriting(size_t segment) const {
+  std::shared_lock lock(m_);
+  return segment < segs_.size() && segs_[segment].writer != nullptr;
+}
+
 int64_t InputStore::srcPtsOf(const FrameRef& ref) const {
   std::shared_lock lock(m_);
   if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return ref.tsUs;
   auto* r = const_cast<SegmentReader*>(segs_[ref.segment].reader.get());
-  r->refresh();
+  if (ref.index >= r->records().size()) r->refresh();  // no file open once the record is loaded
   const auto& recs = r->records();
   return ref.index < recs.size() ? recs[ref.index].srcPtsUs : ref.tsUs;
 }

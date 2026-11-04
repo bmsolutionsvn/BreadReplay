@@ -33,6 +33,7 @@ class InputStore {
   std::optional<FrameRef> find(int64_t tsUs) const;  // at or before, else nullopt
   std::optional<FrameRef> frameAt(size_t segment, size_t index) const;  // by store position
   size_t frameCountIn(size_t segment) const;
+  bool isWriting(size_t segment) const;  // the store still appends to this segment
   std::optional<FrameRef> keyframeAtOrBefore(const FrameRef&) const;
   // The source's pts for a stored frame; its arrival tsUs in v1/v2 or when the source gave none.
   int64_t srcPtsOf(const FrameRef&) const;

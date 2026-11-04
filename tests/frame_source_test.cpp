@@ -344,6 +344,7 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
     header.width = enc.w;
     header.height = enc.h;
     header.rate = bc::Rate{30, 1};
+    header.codec = br::StoredCodec::H264;
     auto store = std::make_unique<br::InputStore>(dir.path, header);
     br::Recorder rec(*store, br::VmxQuality::SQ, 512, 1);
     for (size_t i = 0; i < enc.aus.size(); ++i) {
@@ -356,7 +357,8 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
     }
     REQUIRE(rec.stats().framesWritten == enc.aus.size());
     rec.stop();
-    return store;
+    // Replay from disk, as a restarted player does: the recorded segment is complete.
+    return std::make_unique<br::InputStore>(dir.path, header);
   };
 
   // The worst luma difference for a slot, or a value above the 2 bound when it is not that picture.
@@ -416,4 +418,48 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
   for (uint8_t v : key) avgKey += v;
   avgKey /= static_cast<double>(key.size());
   CHECK(std::abs(avgPreview - avgKey) <= 12.0);
+}
+
+TEST_CASE("FrameSource: an open GOP at the live edge is remapped once it completes"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(90, 60, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 90);
+  const auto ref = referenceY(enc);
+  REQUIRE(ref.size() == 90);
+
+  bc::test::TempDir dir;
+  br::SegmentHeader header;
+  header.inputId = "cam1";
+  header.width = enc.w;
+  header.height = enc.h;
+  header.rate = bc::Rate{30, 1};
+  header.codec = br::StoredCodec::H264;
+  br::InputStore store(dir.path, header);
+  br::FrameSource src({{"cam1", &store}}, gpu.get(), &pool, 1, 64);
+
+  // Feed the first GOP one AU at a time and play it while it is still open.
+  for (size_t i = 0; i <= 60; ++i) {
+    const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+    const int64_t src_pts = kBase + enc.pts[i] * 33333;
+    store.append(ts, enc.aus[i], 0, {}, enc.key[i], src_pts);
+    if (i < 6) {
+      for (size_t s = 0; s <= i; ++s) src.get("cam1", kBase + static_cast<int64_t>(s) * 33333);
+    }
+  }
+
+  // AU 60 is the next keyframe: the first GOP's display order is now known.
+  const auto f1 = src.get("cam1", kBase + 33333);
+  REQUIRE(f1);
+  REQUIRE(f1->picture.tex);
+  const auto y = readLuma(*gpu, *f1);
+  const auto& want = ref.at(1);
+  REQUIRE(y.size() == want.size());
+  int worst = 0;
+  for (size_t i = 0; i < y.size(); ++i) worst = std::max(worst, std::abs(static_cast<int>(y[i]) - want[i]));
+  CHECK(worst <= 2);
 }

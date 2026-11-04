@@ -5,7 +5,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "core/vmx_codec.h"
@@ -24,6 +26,7 @@ struct DecodedFrame {
   std::vector<float> audio;
   int channels = 2, sampleRate = 48000;
   bool inGap = false;
+  bool provisional = false;  // served while its GOP was still open: decode order, may be remapped
 };
 
 struct PreviewImage {
@@ -71,7 +74,7 @@ class FrameSource {
   std::shared_ptr<const DecodedFrame> getCompressed(const std::string& id, const InputStore& store,
                                                     const FrameRef& ref, size_t lane);
   void cachePicture(const std::string& id, const InputStore& store, bc::VideoFrameIn pic, uint32_t w,
-                    uint32_t h, int64_t slotTs);
+                    uint32_t h, int64_t slotTs, bool provisional);
   static size_t bytesOf(const DecodedFrame& f);
   void evict();
   void touch(const Key& key);
@@ -87,6 +90,8 @@ class FrameSource {
   std::list<Key> lru_;  // front = most recently used
   size_t cacheBytes_ = 0;
   std::map<std::pair<std::string, size_t>, Dec> decoders_;
+  // GOPs served while their segment was still open: the display order can change when AUs arrive.
+  std::set<std::tuple<std::string, size_t, size_t>> provisional_;
   std::atomic<uint64_t> diskReads_{0};
   std::atomic<uint64_t> decodes_{0};
 };

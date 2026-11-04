@@ -98,8 +98,11 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
   if (!ref) return nullptr;
   const Key key{inputId, ref->tsUs};
   if (auto it = cache_.find(key); it != cache_.end()) {
-    touch(key);
-    return it->second;
+    if (!it->second->provisional) {
+      touch(key);
+      return it->second;
+    }
+    // A frame cached while its GOP was open may be decode order: let the compressed path re-check it.
   }
   if (store.codecOf(*ref) != StoredCodec::Vmx) {
     // An unsupported profile or a failed allocation holds the last picture, never kills the tick.
@@ -138,7 +141,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
 }
 
 void FrameSource::cachePicture(const std::string& id, const InputStore& store, bc::VideoFrameIn pic,
-                               uint32_t w, uint32_t h, int64_t slotTs) {
+                               uint32_t w, uint32_t h, int64_t slotTs, bool provisional) {
   if (!pic.tex) return;
   ++decodes_;
   const int64_t ts = slotTs;
@@ -149,6 +152,7 @@ void FrameSource::cachePicture(const std::string& id, const InputStore& store, b
   frame->tsUs = ts;
   frame->w = w;
   frame->h = h;
+  frame->provisional = provisional;
   frame->picture = std::move(pic);
   if (const auto ref = store.find(ts)) {
     frame->audio = store.readAudio(*ref);
@@ -177,12 +181,39 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   const size_t seg = ref.segment;
   const Key want{id, ref.tsUs};
   const size_t count = store.frameCountIn(seg);
+  const size_t gopEnd = std::min(count, store.nextKeyframeAfter(*k));
+  // The last GOP of the segment being written can still gain AUs, so its display order is not final.
+  const bool gopFinal = gopEnd < count || !store.isWriting(seg);
+  if (gopFinal) {
+    if (provisional_.erase(std::make_tuple(id, seg, k->index))) {
+      // Slots filled while the GOP was open may hold decode-order pictures: drop them and re-feed.
+      const auto first = store.frameAt(seg, k->index);
+      const auto last = store.frameAt(seg, gopEnd - 1);
+      if (first && last) {
+        auto it = cache_.lower_bound(Key{id, first->tsUs});
+        while (it != cache_.end() && it->first.input == id && it->first.tsUs <= last->tsUs) {
+          cacheBytes_ -= bytesOf(*it->second);
+          for (auto l = lru_.begin(); l != lru_.end(); ++l) {
+            if (l->input == id && l->tsUs == it->first.tsUs) {
+              lru_.erase(l);
+              break;
+            }
+          }
+          it = cache_.erase(it);
+        }
+      }
+      d.hx->reset();
+      d.primed = false;
+    }
+  } else {
+    provisional_.insert(std::make_tuple(id, seg, k->index));
+    if (auto it = cache_.find(want); it != cache_.end()) return it->second;  // already served this slot
+  }
 
   const auto feed = [&](size_t start) {
     // Within one GOP the r-th picture in display order takes the r-th arrival slot.
     std::map<int64_t, std::deque<int64_t>> slots;
     {
-      const size_t gopEnd = std::min(count, store.nextKeyframeAfter(*k));
       std::vector<std::pair<int64_t, size_t>> order;  // (source pts, decode index)
       order.reserve(gopEnd > k->index ? gopEnd - k->index : 0);
       for (size_t i = k->index; i < gopEnd; ++i) {
@@ -190,7 +221,10 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
         if (!fr) break;
         order.emplace_back(store.srcPtsOf(*fr), i);
       }
-      std::sort(order.begin(), order.end());
+      // An open GOP or a source that gives no ordering (all pts equal) keeps decode order.
+      if (gopFinal && order.size() > 1 && order.front().first != order.back().first) {
+        std::sort(order.begin(), order.end());
+      }
       for (size_t r = 0; r < order.size(); ++r) {
         const auto slot = store.frameAt(seg, k->index + r);
         if (!slot) break;
@@ -214,7 +248,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       if (au.empty()) break;
       d.hx->decode(au, store.srcPtsOf(*fr), [&](bc::VideoFrameIn pic) {
         const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot);
+        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
       });
       d.primed = true;
       d.seg = seg;
@@ -228,7 +262,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       // The last pictures of the segment sit in the decoder until it is drained.
       d.hx->flush([&](bc::VideoFrameIn pic) {
         const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot);
+        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
       });
       d.primed = false;
     }
