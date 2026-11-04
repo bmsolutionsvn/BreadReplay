@@ -31,14 +31,15 @@ void OutputPlayer::playEvents(std::vector<int> ids) {
   std::stable_sort(ids.begin(), ids.end(), [&](int a, int b) {
     return std::find(display.begin(), display.end(), a) < std::find(display.begin(), display.end(), b);
   });
-  highlight_ = std::move(ids);
+  highlight_.clear();
+  for (int id : ids) highlight_.push_back(*events_.find(id));
   if (highlight_.empty()) return;
   highlightIndex_ = 0;
   playingHighlight_ = true;
   fading_ = false;
   fadeElapsedUs_ = 0;
   fadePlayer_ = std::make_unique<Player>(events_, settings_.rate, false);
-  player_.cue(highlight_.front());
+  player_.cueCopy(highlight_.front());
   player_.play();
 }
 
@@ -61,7 +62,7 @@ void OutputPlayer::advanceHighlight() {
   fadeElapsedUs_ = 0;
   ++highlightIndex_;
   if (highlightIndex_ < highlight_.size()) {
-    player_.cue(highlight_[highlightIndex_]);
+    player_.cueCopy(highlight_[highlightIndex_]);
     player_.play();
   } else {
     playingHighlight_ = false;
@@ -111,7 +112,7 @@ void OutputPlayer::tickOnce() {
       if (!fading_) {
         fading_ = true;
         fadeElapsedUs_ = 0;
-        fadePlayer_->cue(highlight_[highlightIndex_ + 1]);
+        fadePlayer_->cueCopy(highlight_[highlightIndex_ + 1]);
         fadePlayer_->play();
       }
       const TickResult next = fadePlayer_->tick();

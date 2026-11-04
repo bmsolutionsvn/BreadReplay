@@ -65,12 +65,30 @@ bool CommandRouter::isEdit(const std::string& name, const nlohmann::json& cmd) c
   return false;
 }
 
+bool CommandRouter::isPassSettling(const std::string& name) const {
+  return name == "mark.in" || name == "mark.out" || name == "mark.lastN" ||
+         name == "event.update" || name == "event.trim" || name == "event.delete" ||
+         name == "event.clearCuts" || name == "event.move" || name == "list.new" ||
+         name == "list.rename" || name == "list.delete" || name == "list.reorder" ||
+         name == "edit.undo" || name == "edit.redo" || name == "player.cue" ||
+         name == "player.cueAt" || name == "player.live" || name == "player.pause" ||
+         name == "player.play" || name == "take" || name == "show.new" || name == "show.open";
+}
+
+void CommandRouter::settlePass() {
+  if (!passBefore_) return;
+  if (engine_.events().version() != passBefore_->version()) engine_.history().record(*passBefore_);
+  passBefore_.reset();
+}
+
 nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
   try {
     const std::string name = cmd.value("cmd", std::string{});
+    if (isPassSettling(name)) settlePass();
     std::optional<EventStore> before;
     if (isEdit(name, cmd)) before = engine_.events();
     auto reply = handleImpl(cmd);
+    if ((name == "player.play" || name == "take") && !passBefore_) passBefore_ = engine_.events();
     if (before && engine_.events().version() != before->version()) engine_.history().record(*before);
     return reply;
   } catch (const std::exception& e) {

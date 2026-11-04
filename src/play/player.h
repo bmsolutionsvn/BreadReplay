@@ -31,8 +31,9 @@ struct TickResult {
 
 class Player {
  public:
-  Player(EventStore& events, bc::Rate showRate, bool recordCuts);
+  Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze = false);
   void cue(int eventId);
+  void cueCopy(const Event& e);
   void cueAt(int64_t t, const std::string& angle);
   void play();
   void pause();
@@ -47,15 +48,50 @@ class Player {
   double remainingSeconds() const;  // to Out; +inf at speed 0
   const PlayerState& state() const { return state_; }
   void restore(const PlayerState&);
+  // The event this player reads: a copy when frozen or cued from one, else the store.
+  const Event* event() const;
 
  private:
+  struct AnglePass {
+    bool active = false;
+    int64_t fromUs = 0;
+    std::vector<AngleCut> points;
+  };
+  struct SpeedPass {
+    bool active = false;
+    int64_t fromUs = 0;
+    std::vector<SpeedPoint> points;
+  };
+  struct ZoomPass {
+    bool active = false;
+    int64_t fromUs = 0;
+    std::vector<ZoomPoint> points;
+  };
+
   double currentSpeed(const Event* e) const;
+  void beginPass();
+  void endPass();
+  void commitPass(bool finish, int64_t toUs);
+  void recordAnglePass(const std::string& id);
+  void recordSpeedPass(double s);
+  void recordZoomPass(ZoomRect r);
 
   EventStore& events_;
   int64_t periodUs_ = 0;
   bool recordCuts_ = true;
+  bool freeze_ = false;
   PlayerState state_;
   bool ended_ = false;
+  std::optional<Event> frozen_;
+  bool angleManual_ = false;
+  bool zoomManual_ = false;
+  bool passHasBase_ = false;
+  AnglePass passAngles_;
+  SpeedPass passSpeeds_;
+  ZoomPass passZooms_;
+  std::vector<AngleCut> baseAngles_, frozenBaseAngles_;
+  std::vector<SpeedPoint> baseSpeeds_, frozenBaseSpeeds_;
+  std::vector<ZoomPoint> baseZooms_, frozenBaseZooms_;
 };
 
 }  // namespace br

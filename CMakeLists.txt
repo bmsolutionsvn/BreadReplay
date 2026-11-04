@@ -86,6 +86,7 @@ add_executable(br_tests
   tests/event_store_test.cpp
   tests/edit_history_test.cpp
   tests/show_file_test.cpp
+  tests/pass_test.cpp
   tests/player_test.cpp
   tests/frame_source_test.cpp
   tests/renderer_test.cpp

@@ -58,6 +58,9 @@ class EventStore {
   void recordAngle(int id, int64_t t, const std::string& inputId);
   void recordSpeed(int id, int64_t t, double s);
   void recordZoom(int id, int64_t t, ZoomRect r);
+  void setAngles(int id, std::vector<AngleCut> angles);
+  void setSpeeds(int id, std::vector<SpeedPoint> speeds);
+  void setZooms(int id, std::vector<ZoomPoint> zooms);
   const std::vector<int>& orderOf(const std::string& listId) const;
   std::vector<int> displayOrder() const;
   std::string newList(const std::string& name);

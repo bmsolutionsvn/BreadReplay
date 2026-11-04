@@ -6,8 +6,14 @@
 namespace br {
 namespace {
 template <typename Point>
-void overwriteFrom(std::vector<Point>& points, int64_t t) {
-  points.erase(std::remove_if(points.begin(), points.end(), [&](const Point& p) { return p.tUs >= t; }), points.end());
+void upsert(std::vector<Point>& points, const Point& p) {
+  const auto at = std::find_if(points.begin(), points.end(), [&](const Point& q) { return q.tUs == p.tUs; });
+  if (at != points.end()) {
+    *at = p;
+  } else {
+    points.push_back(p);
+  }
+  std::sort(points.begin(), points.end(), [](const Point& a, const Point& b) { return a.tUs < b.tUs; });
 }
 }  // namespace
 
@@ -108,27 +114,42 @@ void EventStore::clearCuts(int id) {
 void EventStore::recordAngle(int id, int64_t t, const std::string& inputId) {
   Event* e = find(id);
   if (!e) return;
-  overwriteFrom(e->angles, t);
-  e->angles.push_back(AngleCut{t, inputId});
-  std::sort(e->angles.begin(), e->angles.end(), [](const AngleCut& a, const AngleCut& b) { return a.tUs < b.tUs; });
+  upsert(e->angles, AngleCut{t, inputId});
   ++version_;
 }
 
 void EventStore::recordSpeed(int id, int64_t t, double s) {
   Event* e = find(id);
   if (!e) return;
-  overwriteFrom(e->speeds, t);
-  e->speeds.push_back(SpeedPoint{t, s});
-  std::sort(e->speeds.begin(), e->speeds.end(), [](const SpeedPoint& a, const SpeedPoint& b) { return a.tUs < b.tUs; });
+  upsert(e->speeds, SpeedPoint{t, s});
   ++version_;
 }
 
 void EventStore::recordZoom(int id, int64_t t, ZoomRect r) {
   Event* e = find(id);
   if (!e) return;
-  overwriteFrom(e->zooms, t);
-  e->zooms.push_back(ZoomPoint{t, r});
-  std::sort(e->zooms.begin(), e->zooms.end(), [](const ZoomPoint& a, const ZoomPoint& b) { return a.tUs < b.tUs; });
+  upsert(e->zooms, ZoomPoint{t, r});
+  ++version_;
+}
+
+void EventStore::setAngles(int id, std::vector<AngleCut> angles) {
+  Event* e = find(id);
+  if (!e) return;
+  e->angles = std::move(angles);
+  ++version_;
+}
+
+void EventStore::setSpeeds(int id, std::vector<SpeedPoint> speeds) {
+  Event* e = find(id);
+  if (!e) return;
+  e->speeds = std::move(speeds);
+  ++version_;
+}
+
+void EventStore::setZooms(int id, std::vector<ZoomPoint> zooms) {
+  Event* e = find(id);
+  if (!e) return;
+  e->zooms = std::move(zooms);
   ++version_;
 }
 

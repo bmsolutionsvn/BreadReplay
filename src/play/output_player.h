@@ -53,7 +53,7 @@ class OutputPlayer {
   mutable std::mutex heldMutex_;
   bc::TextureRef held_;
 
-  std::vector<int> highlight_;
+  std::vector<Event> highlight_;
   size_t highlightIndex_ = 0;
   bool playingHighlight_ = false;
   std::unique_ptr<Player> fadePlayer_;

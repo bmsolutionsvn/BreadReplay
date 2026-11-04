@@ -154,6 +154,48 @@ TEST_CASE("Router: event.update takes speeds and zooms") {
   CHECK(e.zooms[0].rect.scale == doctest::Approx(2.0));
 }
 
+TEST_CASE("Router: one pass is one undo step, even when it ends by itself") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  r.handle({{"cmd", "player.cue"}, {"eventId", id}});
+  const auto before = *f.engine->events().find(id);
+  r.handle({{"cmd", "player.play"}});
+  r.handle({{"cmd", "player.preset"}, {"speed", 0.75}});
+  r.handle({{"cmd", "player.preset"}, {"speed", 0.5}});
+  r.handle({{"cmd", "player.angle"}, {"inputId", "cam1"}});
+  auto& p = f.engine->playerFor("preview");
+  for (int i = 0; i < 10000 && p.state().playing; ++i) p.tick();
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  const auto& after = *f.engine->events().find(id);
+  REQUIRE(after.angles.size() == before.angles.size());
+  for (size_t i = 0; i < before.angles.size(); ++i) {
+    CHECK(after.angles[i].tUs == before.angles[i].tUs);
+    CHECK(after.angles[i].inputId == before.angles[i].inputId);
+  }
+  REQUIRE(after.speeds.size() == before.speeds.size());
+  for (size_t i = 0; i < before.speeds.size(); ++i) {
+    CHECK(after.speeds[i].tUs == before.speeds[i].tUs);
+    CHECK(after.speeds[i].speed == doctest::Approx(before.speeds[i].speed));
+  }
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  CHECK(f.engine->events().events().empty());
+}
+
+TEST_CASE("Router: undo while Output plays does not change the picture") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  r.handle({{"cmd", "player.cue"}, {"eventId", id}});
+  r.handle({{"cmd", "player.play"}});
+  r.handle({{"cmd", "take"}});
+  const double before = f.engine->playerFor("output").remainingSeconds();
+  r.handle({{"cmd", "event.trim"}, {"id", id}, {"outFrames", -30}});
+  r.handle({{"cmd", "edit.undo"}});
+  r.handle({{"cmd", "edit.redo"}});
+  CHECK(f.engine->playerFor("output").remainingSeconds() == doctest::Approx(before));
+}
+
 TEST_CASE("Router: a new show clears undo history") {
   Fixture f;
   br::CommandRouter r(*f.engine);

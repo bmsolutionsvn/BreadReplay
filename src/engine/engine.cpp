@@ -160,7 +160,7 @@ Engine::Engine(EngineDeps deps, Show show, std::filesystem::path folder)
   show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
                        static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
   previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
-  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true);
   rebuildFrameSource();
 }
 
@@ -249,7 +249,7 @@ void Engine::start() {
   rebuildFrameSource();
 
   previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
-  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true);
   renderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, show_.settings.outW,
                                          show_.settings.outH);
   previewRenderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, kPreviewWidth,
