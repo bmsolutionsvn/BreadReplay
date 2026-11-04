@@ -31,6 +31,9 @@ class Recorder {
   Recorder& operator=(const Recorder&) = delete;
   void pushVideo(const bc::CpuVideoFrame& f, int64_t tsUs);
   void pushCoded(int64_t tsUs, std::vector<uint8_t> vmx);  // OMT pass-through
+  // One H.264/HEVC access unit as it arrived (Annex-B); stored without decoding or encoding.
+  void pushCodedAu(int64_t tsUs, StoredCodec codec, uint32_t w, uint32_t h, bool keyframe,
+                   std::vector<uint8_t> au);
   void pushAudio(std::span<const float> samples, int channels, int sampleRate);
   RecorderStats stats() const;
   void stop();
@@ -39,7 +42,10 @@ class Recorder {
   struct Job {
     uint64_t seq = 0;
     int64_t tsUs = 0;
-    bool coded = false;
+    bool coded = false;  // VMX as received
+    bool codedAu = false;  // H.264/HEVC as received
+    StoredCodec codec = StoredCodec::Vmx;
+    bool keyframe = true;
     uint32_t w = 0, h = 0;
     int stride = 0;
     bc::CpuPixel format = bc::CpuPixel::UYVY;
@@ -49,6 +55,9 @@ class Recorder {
   struct Done {
     EncodedFrame frame;
     bool coded = false;
+    bool codedAu = false;
+    StoredCodec codec = StoredCodec::Vmx;
+    bool keyframe = true;
     std::vector<uint8_t> raw;
     int64_t tsUs = 0;
     std::vector<float> audio;

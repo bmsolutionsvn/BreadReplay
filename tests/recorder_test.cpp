@@ -128,6 +128,36 @@ TEST_CASE("Recorder: pushCoded stores the frame with its preview length") {
   CHECK(store.readVideo(*ref, true).size() == encoded.previewLen);
 }
 
+TEST_CASE("Recorder: pushCodedAu stores from the first keyframe with flags and bytes") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  br::Recorder rec(store, br::VmxQuality::SQ, 8, 1);
+  const int64_t base = baseTs();
+  const auto au = [](uint8_t v) { return std::vector<uint8_t>(8, v); };
+  rec.pushCodedAu(base + 0, br::StoredCodec::Hevc, 320, 180, false, au(1));  // joins mid-GOP
+  rec.pushCodedAu(base + 1, br::StoredCodec::Hevc, 320, 180, false, au(2));
+  rec.pushCodedAu(base + 2, br::StoredCodec::Hevc, 320, 180, true, au(3));
+  rec.pushCodedAu(base + 3, br::StoredCodec::Hevc, 320, 180, false, au(4));
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 4; }, 5000));
+  rec.stop();
+  CHECK(rec.stats().encodeMsAvg == 0.0);
+  CHECK(store.frameCount() == 2);
+  CHECK(store.droppedBeforeKeyframe() == 2);
+
+  auto key = store.find(base + 2);
+  REQUIRE(key.has_value());
+  CHECK(key->index == 0);
+  CHECK(store.codecOf(*key) == br::StoredCodec::Hevc);
+  CHECK(store.isKeyframe(*key));
+  CHECK(store.readVideo(*key, false) == au(3));
+
+  auto p = store.find(base + 3);
+  REQUIRE(p.has_value());
+  CHECK(p->index == 1);
+  CHECK_FALSE(store.isKeyframe(*p));
+  CHECK(store.readVideo(*p, false) == au(4));
+}
+
 TEST_CASE("Recorder: a size change starts a new segment") {
   bc::test::TempDir dir;
   br::InputStore store(dir.path, proto());

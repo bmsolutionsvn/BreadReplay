@@ -62,6 +62,30 @@ void Recorder::pushCoded(int64_t tsUs, std::vector<uint8_t> vmx) {
   cv_.notify_one();
 }
 
+void Recorder::pushCodedAu(int64_t tsUs, StoredCodec codec, uint32_t w, uint32_t h, bool keyframe,
+                           std::vector<uint8_t> au) {
+  std::unique_lock lock(m_);
+  ++framesIn_;
+  if (static_cast<int>(queue_.size()) >= queueDepth_) {
+    ++dropped_;
+    return;
+  }
+  Job j;
+  j.seq = nextSeq_++;
+  j.tsUs = tsUs;
+  j.codedAu = true;
+  j.codec = codec;
+  j.keyframe = keyframe;
+  j.w = w;
+  j.h = h;
+  j.video = std::move(au);
+  j.audio = std::move(pendingAudio_);
+  pendingAudio_.clear();
+  queue_.push_back(std::move(j));
+  lock.unlock();
+  cv_.notify_one();
+}
+
 void Recorder::pushAudio(std::span<const float> samples, int channels, int sampleRate) {
   if (channels < 1 || sampleRate != store_.header().sampleRate) return;
   std::lock_guard lock(m_);
@@ -118,6 +142,12 @@ void Recorder::worker() {
       d.coded = true;
       d.raw = std::move(job.video);
       d.frame.previewLen = vmxPreviewLength(d.raw, job.w, job.h);
+    } else if (job.codedAu) {
+      d.codedAu = true;
+      d.codec = job.codec;
+      d.keyframe = job.keyframe;
+      d.raw = std::move(job.video);
+      d.frame.previewLen = 0;
     } else {
       // One encoder per worker; a size change makes a new one (and the writer closes the segment).
       if (!enc || ew != job.w || eh != job.h) {
@@ -136,9 +166,11 @@ void Recorder::worker() {
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     {
       std::lock_guard lock(m_);
-      encodeMsSum_ += ms;
-      ++encodeCount_;
-      if (encodeTimes_.size() < 200000) encodeTimes_.push_back(ms);
+      if (!job.coded && !job.codedAu) {
+        encodeMsSum_ += ms;
+        ++encodeCount_;
+        if (encodeTimes_.size() < 200000) encodeTimes_.push_back(ms);
+      }
       done_.emplace(job.seq, std::move(d));
       --inflight_;
     }
@@ -165,11 +197,17 @@ void Recorder::writerLoop() {
     }
     // Compare with the store's header, not the previous frame: an input whose first frame is not
     // the show size (a 720p observer in a 1080p show) must start a segment with its own size.
-    if (d.w && d.h && (d.w != store_.header().width || d.h != store_.header().height)) {
-      store_.changeVideoFormat(d.w, d.h, store_.header().rate);
+    if (d.w && d.h && (d.w != store_.header().width || d.h != store_.header().height ||
+                       (d.codedAu && d.codec != store_.header().codec))) {
+      store_.changeVideoFormat(d.w, d.h, store_.header().rate, d.codedAu ? d.codec : StoredCodec::Vmx);
     }
-    const std::span<const uint8_t> bytes = d.coded ? std::span<const uint8_t>(d.raw) : std::span<const uint8_t>(d.frame.bytes);
-    store_.append(d.tsUs, bytes, d.frame.previewLen, d.audio);
+    if (d.codedAu) {
+      store_.append(d.tsUs, d.raw, 0, d.audio, d.keyframe);
+    } else {
+      const std::span<const uint8_t> bytes =
+          d.coded ? std::span<const uint8_t>(d.raw) : std::span<const uint8_t>(d.frame.bytes);
+      store_.append(d.tsUs, bytes, d.frame.previewLen, d.audio);
+    }
     std::lock_guard lock(m_);
     ++framesWritten_;
   }

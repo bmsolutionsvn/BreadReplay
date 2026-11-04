@@ -2,6 +2,10 @@
 
 #include <windows.h>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -10,6 +14,8 @@
 #include <set>
 
 #include "core/timecode.h"
+#include "engine/preview_encoder.h"
+#include "io/remux.h"
 #include "engine/adapter_factory.h"
 #include "engine/command_router.h"
 #include "engine/preview_encoder.h"
@@ -39,6 +45,79 @@ int64_t freeBytesAt(const std::filesystem::path& p) {
 
 nlohmann::json zoomJson(const ZoomRect& z) {
   return {{"cx", z.cx}, {"cy", z.cy}, {"scale", z.scale}};
+}
+
+bool isAnnexB(std::span<const uint8_t> d) {
+  return d.size() >= 4 && d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1));
+}
+
+bool hasNal(std::span<const uint8_t> d, int type, bool hevc) {
+  for (size_t i = 0; i + 3 < d.size(); ++i) {
+    if (d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1) {
+      const int t = hevc ? (d[i + 3] >> 1) & 0x3F : d[i + 3] & 0x1F;
+      if (t == type) return true;
+    }
+  }
+  return false;
+}
+
+bool hasParameterSets(std::span<const uint8_t> d, StoredCodec codec) {
+  if (codec == StoredCodec::Hevc) return hasNal(d, 32, true) && hasNal(d, 33, true) && hasNal(d, 34, true);
+  return hasNal(d, 7, false) && hasNal(d, 8, false);
+}
+
+// AVCC/AVC length prefixes to Annex-B. MPEG-TS packets are already Annex-B.
+// shortcut: 4-byte lengths only; add 1/2-byte lengths if an AVCC SRT source appears.
+std::vector<uint8_t> avccPacketToAnnexB(std::span<const uint8_t> a) {
+  std::vector<uint8_t> out;
+  size_t pos = 0;
+  while (pos + 4 <= a.size()) {
+    const uint32_t len = (static_cast<uint32_t>(a[pos]) << 24) | (static_cast<uint32_t>(a[pos + 1]) << 16) |
+                         (static_cast<uint32_t>(a[pos + 2]) << 8) | a[pos + 3];
+    pos += 4;
+    if (len == 0 || pos + len > a.size()) return {};
+    out.insert(out.end(), {0, 0, 0, 1});
+    out.insert(out.end(), a.begin() + pos, a.begin() + pos + len);
+    pos += len;
+  }
+  return pos == a.size() ? out : std::vector<uint8_t>{};
+}
+
+// hvcC configuration record to Annex-B parameter sets.
+std::vector<uint8_t> hvccToAnnexB(std::span<const uint8_t> a) {
+  if (a.size() < 23 || a[0] != 1) return {};
+  std::vector<uint8_t> out;
+  size_t pos = 23;
+  for (int array = 0; array < a[22]; ++array) {
+    if (pos + 3 > a.size()) return {};
+    const int count = (a[pos + 1] << 8) | a[pos + 2];
+    pos += 3;
+    for (int i = 0; i < count; ++i) {
+      if (pos + 2 > a.size()) return {};
+      const size_t len = (static_cast<size_t>(a[pos]) << 8) | a[pos + 1];
+      pos += 2;
+      if (pos + len > a.size()) return {};
+      out.insert(out.end(), {0, 0, 0, 1});
+      out.insert(out.end(), a.begin() + pos, a.begin() + pos + len);
+      pos += len;
+    }
+  }
+  return out;
+}
+
+std::vector<uint8_t> extradataAnnexB(const AVCodecParameters& p, StoredCodec codec) {
+  if (!p.extradata || p.extradata_size <= 0) return {};
+  const std::span<const uint8_t> ex(p.extradata, static_cast<size_t>(p.extradata_size));
+  if (isAnnexB(ex)) return std::vector<uint8_t>(ex.begin(), ex.end());
+  if (codec == StoredCodec::H264 && ex[0] == 1) {
+    try {
+      return bc::avccToAnnexB(ex);
+    } catch (const std::exception&) {
+      return {};
+    }
+  }
+  if (codec == StoredCodec::Hevc) return hvccToAnnexB(ex);
+  return {};
 }
 }  // namespace
 
@@ -70,9 +149,44 @@ void Engine::Sink::onCpuVideo(const bc::CpuVideoFrame& f) {
 }
 
 void Engine::Sink::onCodedVideo(const bc::CodedVideoFrame& f) {
-  if (auto* rec = engine.recorderFor(inputId)) {
-    rec->pushCoded(engine.now(), std::vector<uint8_t>(f.data.begin(), f.data.end()));
+  auto* rec = engine.recorderFor(inputId);
+  if (!rec) return;
+  std::vector<uint8_t> bytes(f.data.begin(), f.data.end());
+  if (f.codec == "vmx") {
+    rec->pushCoded(engine.now(), std::move(bytes));
+    return;
   }
+  const StoredCodec codec = f.codec == "h264" ? StoredCodec::H264 : StoredCodec::Hevc;
+  coded_ = true;
+  rec->pushCodedAu(engine.now(), codec, f.width, f.height, f.keyframe, std::move(bytes));
+}
+
+void Engine::Sink::onPacket(std::shared_ptr<const bc::MediaPacket> p) {
+  if (!p || !p->video || !p->params) return;
+  const AVCodecID id = p->params->codec_id;
+  const StoredCodec codec =
+      id == AV_CODEC_ID_H264 ? StoredCodec::H264 : id == AV_CODEC_ID_HEVC ? StoredCodec::Hevc : StoredCodec::Vmx;
+  if (codec == StoredCodec::Vmx) return;  // other SRT codecs keep the decoded-picture path
+  coded_ = true;                          // the registration packet has no data
+  if (!p->pkt) return;
+  auto* rec = engine.recorderFor(inputId);
+  if (!rec) return;
+  std::vector<uint8_t> au(p->pkt->data, p->pkt->data + p->pkt->size);
+  if (!isAnnexB(au)) au = avccPacketToAnnexB(au);
+  if (au.empty()) return;
+  const bool keyframe = (p->pkt->flags & AV_PKT_FLAG_KEY) != 0;
+  if (keyframe && !hasParameterSets(au, codec)) {
+    const auto sets = extradataAnnexB(*p->params, codec);
+    if (!sets.empty()) {
+      std::vector<uint8_t> withSets;
+      withSets.reserve(sets.size() + au.size());
+      withSets.insert(withSets.end(), sets.begin(), sets.end());
+      withSets.insert(withSets.end(), au.begin(), au.end());
+      au = std::move(withSets);
+    }
+  }
+  rec->pushCodedAu(engine.now(), codec, static_cast<uint32_t>(p->params->width),
+                   static_cast<uint32_t>(p->params->height), keyframe, std::move(au));
 }
 
 Recorder* Engine::recorderFor(const std::string& id) {
