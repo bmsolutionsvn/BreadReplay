@@ -38,6 +38,13 @@ AVCodecParameters paramsFor(const std::vector<uint8_t>& extradata) {
 }
 }  // namespace
 
+TEST_CASE("PacketConvert: a packet pts becomes the frame's source microseconds") {
+  CHECK(br::packetSourcePtsUs(9000, AVRational{1, 90000}, 5'000'000) == 100'000);
+  CHECK(br::packetSourcePtsUs(0, AVRational{1, 90000}, 5'000'000) == 0);
+  CHECK(br::packetSourcePtsUs(AV_NOPTS_VALUE, AVRational{1, 90000}, 5'000'000) == 5'000'000);
+  CHECK(br::packetSourcePtsUs(9000, AVRational{0, 0}, 5'000'000) == 5'000'000);
+}
+
 TEST_CASE("PacketConvert: an AVCC H.264 packet becomes Annex-B") {
   const std::vector<uint8_t> avcc = {0, 0, 0, 3, 0x65, 0x88, 0x84};
   const auto annex = br::packetToAnnexB(avcc, br::StoredCodec::H264);

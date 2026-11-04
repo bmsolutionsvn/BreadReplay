@@ -207,6 +207,29 @@ TEST_CASE("InputStore: a compressed segment rolls at a keyframe, not on the minu
   CHECK(store.segments().size() == 2);
 }
 
+TEST_CASE("InputStore: a stored frame exposes its source pts and the next keyframe") {
+  bc::test::TempDir dir;
+  auto h = proto();
+  h.codec = br::StoredCodec::H264;
+  br::InputStore store(dir.path, h);
+  const int64_t base = noon();
+  store.append(base, video(0), 0, audio(0), true, base + 5'000);
+  store.append(base + 33'333, video(1), 0, audio(1), false, base + 1'000);
+  store.append(base + 66'666, video(2), 0, audio(2), true, base + 9'000);
+  store.append(base + 99'999, video(3), 0, audio(3), false, base + 7'000);
+
+  auto first = store.find(base);
+  REQUIRE(first.has_value());
+  CHECK(store.srcPtsOf(*first) == base + 5'000);
+  auto second = store.find(base + 33'333);
+  REQUIRE(second.has_value());
+  CHECK(store.srcPtsOf(*second) == base + 1'000);
+
+  CHECK(store.nextKeyframeAfter(*first) == 2);
+  CHECK(store.nextKeyframeAfter(*second) == 2);
+  CHECK(store.nextKeyframeAfter(br::FrameRef{second->segment, 2, base + 66'666}) == 4);
+}
+
 TEST_CASE("InputStore: a 30 fps input in a 59.94 show is one continuous range") {
   bc::test::TempDir dir;
   auto show = proto();

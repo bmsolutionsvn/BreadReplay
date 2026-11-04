@@ -46,6 +46,7 @@ void put64(std::vector<uint8_t>& o, int64_t v) {
 // Byte fixture in the v1 layout: version 1, no codec field, reserved = 0. The frames are real VMX
 // pictures, so the same bytes still decode after the upgrade.
 std::vector<std::vector<uint8_t>> writeV1Segment(const std::filesystem::path& base, int frames) {
+  // v1 and v2 share the 32-byte index record; only the header differs.
   std::vector<uint8_t> idx;
   put32(idx, 1);
   put32(idx, 4);
@@ -90,6 +91,43 @@ std::vector<std::vector<uint8_t>> writeV1Segment(const std::filesystem::path& ba
   std::ofstream(base.string() + ".vmxi", std::ios::binary).write(reinterpret_cast<const char*>(idx.data()), static_cast<std::streamsize>(idx.size()));
   std::ofstream(base.string() + ".vmxs", std::ios::binary).write(reinterpret_cast<const char*>(ess.data()), static_cast<std::streamsize>(ess.size()));
   return encoded;
+}
+
+// Byte fixture in the v2 layout: version 2 with codec = H.264, then 32-byte records.
+void writeV2Segment(const std::filesystem::path& base, int frames) {
+  std::vector<uint8_t> idx;
+  put32(idx, 2);
+  idx.push_back(static_cast<uint8_t>(br::StoredCodec::H264));
+  put32(idx, 4);
+  idx.insert(idx.end(), {'c', 'a', 'm', '1'});
+  put32(idx, 320);
+  put32(idx, 180);
+  put32(idx, 30);
+  put32(idx, 1);
+  put16(idx, 2);
+  put32(idx, 48000);
+
+  std::vector<uint8_t> ess;
+  for (int i = 0; i < frames; ++i) {
+    const int64_t ts = 2'000'000 + i * 33'333;
+    const std::vector<uint8_t> video = makeVideo(i, 16);
+    const int64_t offset = static_cast<int64_t>(ess.size());
+    put64(idx, ts);
+    put64(idx, offset);
+    put32(idx, static_cast<uint32_t>(video.size()));
+    put32(idx, 0);
+    put32(idx, 0);
+    put32(idx, i == 0 ? 1u : 0u);  // keyframe flag
+
+    ess.insert(ess.end(), {'B', 'R', 'F', '1'});
+    put64(ess, ts);
+    put32(ess, static_cast<uint32_t>(video.size()));
+    put32(ess, 0);
+    put32(ess, 0);
+    ess.insert(ess.end(), video.begin(), video.end());
+  }
+  std::ofstream(base.string() + ".vmxi", std::ios::binary).write(reinterpret_cast<const char*>(idx.data()), static_cast<std::streamsize>(idx.size()));
+  std::ofstream(base.string() + ".vmxs", std::ios::binary).write(reinterpret_cast<const char*>(ess.data()), static_cast<std::streamsize>(ess.size()));
 }
 }  // namespace
 
@@ -206,7 +244,42 @@ TEST_CASE("Segment: audio stays with its frame") {
   CHECK(r->readAudio(5) == makeAudio(5));
 }
 
-TEST_CASE("Segment: v2 HEVC round-trips codec, keyframe flags and bytes") {
+TEST_CASE("Segment: v3 frames keep the source pts beside the arrival time") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "seg";
+  {
+    br::SegmentWriter w(base, headerFor());
+    w.append(1'000'000, makeVideo(0), 8, makeAudio(0), true, 900'000);
+    w.append(2'000'000, makeVideo(1), 8, makeAudio(1), true, 2'000'000);
+    w.close();
+  }
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  r->refresh();
+  CHECK(r->header().version == 3);
+  REQUIRE(r->records().size() == 2);
+  CHECK(r->records()[0].tsUs == 1'000'000);
+  CHECK(r->records()[0].srcPtsUs == 900'000);
+  CHECK(r->records()[1].srcPtsUs == 2'000'000);
+  CHECK(r->readVideo(0, false) == makeVideo(0));
+}
+
+TEST_CASE("Segment: a v2 segment reads with its source pts equal to the arrival time") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "v2";
+  writeV2Segment(base, 3);
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  r->refresh();
+  CHECK(r->header().version == 2);
+  REQUIRE(r->records().size() == 3);
+  for (int i = 0; i < 3; ++i) {
+    CHECK(r->records()[static_cast<size_t>(i)].tsUs == 2'000'000 + i * 33'333);
+    CHECK(r->records()[static_cast<size_t>(i)].srcPtsUs == r->records()[static_cast<size_t>(i)].tsUs);
+  }
+}
+
+TEST_CASE("Segment: v3 HEVC round-trips codec, keyframe flags and bytes") {
   bc::test::TempDir dir;
   const auto base = dir.path / "seg";
   auto h = headerFor();
@@ -221,7 +294,7 @@ TEST_CASE("Segment: v2 HEVC round-trips codec, keyframe flags and bytes") {
   auto r = br::SegmentReader::open(base);
   REQUIRE(r.has_value());
   r->refresh();
-  CHECK(r->header().version == 2);
+  CHECK(r->header().version == 3);
   CHECK(r->header().codec == br::StoredCodec::Hevc);
   REQUIRE(r->records().size() == 5);
   for (int i = 0; i < 5; ++i) {
@@ -242,6 +315,7 @@ TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
   REQUIRE(r->records().size() == 3);
   for (int i = 0; i < 3; ++i) {
     CHECK(r->records()[static_cast<size_t>(i)].flags == 0u);
+    CHECK(r->records()[static_cast<size_t>(i)].srcPtsUs == 1'000'000 + i * 16683);
     CHECK(r->readVideo(static_cast<size_t>(i), false) == encoded[static_cast<size_t>(i)]);
   }
 
@@ -265,7 +339,7 @@ TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
   CHECK(frame->uyvy.size() == 320u * 180u * 2u);
 }
 
-TEST_CASE("Segment: v2 recovery drops a record whose bytes are missing") {
+TEST_CASE("Segment: v3 recovery drops a record whose bytes are missing") {
   bc::test::TempDir dir;
   const auto base = dir.path / "seg";
   auto h = headerFor();

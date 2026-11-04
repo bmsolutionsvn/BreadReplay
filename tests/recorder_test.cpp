@@ -134,10 +134,10 @@ TEST_CASE("Recorder: pushCodedAu stores from the first keyframe with flags and b
   br::Recorder rec(store, br::VmxQuality::SQ, 8, 1);
   const int64_t base = baseTs();
   const auto au = [](uint8_t v) { return std::vector<uint8_t>(8, v); };
-  rec.pushCodedAu(base + 0, br::StoredCodec::Hevc, 320, 180, false, au(1));  // joins mid-GOP
-  rec.pushCodedAu(base + 1, br::StoredCodec::Hevc, 320, 180, false, au(2));
-  rec.pushCodedAu(base + 2, br::StoredCodec::Hevc, 320, 180, true, au(3));
-  rec.pushCodedAu(base + 3, br::StoredCodec::Hevc, 320, 180, false, au(4));
+  rec.pushCodedAu(base + 0, base + 0, br::StoredCodec::Hevc, 320, 180, false, au(1));  // joins mid-GOP
+  rec.pushCodedAu(base + 1, base + 1, br::StoredCodec::Hevc, 320, 180, false, au(2));
+  rec.pushCodedAu(base + 2, base + 2, br::StoredCodec::Hevc, 320, 180, true, au(3));
+  rec.pushCodedAu(base + 3, base + 3, br::StoredCodec::Hevc, 320, 180, false, au(4));
   REQUIRE(waitFor([&] { return rec.stats().framesWritten == 4; }, 5000));
   rec.stop();
   CHECK(rec.stats().encodeMsAvg == 0.0);
@@ -159,12 +159,31 @@ TEST_CASE("Recorder: pushCodedAu stores from the first keyframe with flags and b
   CHECK(store.readVideo(*p, false) == au(4));
 }
 
+TEST_CASE("Recorder: pushCodedAu keeps the source pts apart from the arrival time") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  br::Recorder rec(store, br::VmxQuality::SQ, 8, 1);
+  const int64_t base = baseTs();
+  rec.pushCodedAu(base, base + 100'000, br::StoredCodec::H264, 320, 180, true,
+                  std::vector<uint8_t>(8, 9));
+  rec.pushCodedAu(base + 33'333, base - 100'000, br::StoredCodec::H264, 320, 180, false,
+                  std::vector<uint8_t>(8, 10));
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 2; }, 5000));
+  rec.stop();
+  auto first = store.find(base);
+  REQUIRE(first.has_value());
+  CHECK(store.srcPtsOf(*first) == base + 100'000);
+  auto second = store.find(base + 33'333);
+  REQUIRE(second.has_value());
+  CHECK(store.srcPtsOf(*second) == base - 100'000);
+}
+
 TEST_CASE("Recorder: a codec change starts a new segment") {
   bc::test::TempDir dir;
   br::InputStore store(dir.path, proto());
   br::Recorder rec(store, br::VmxQuality::SQ, 32, 1);
   const int64_t base = baseTs();
-  rec.pushCodedAu(base, br::StoredCodec::Hevc, 320, 180, true, std::vector<uint8_t>(8, 7));
+  rec.pushCodedAu(base, base, br::StoredCodec::Hevc, 320, 180, true, std::vector<uint8_t>(8, 7));
   REQUIRE(waitFor([&] { return rec.stats().framesWritten == 1; }, 5000));
 
   Frame src(320, 180, 77);
