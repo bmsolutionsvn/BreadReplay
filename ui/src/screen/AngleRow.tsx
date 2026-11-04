@@ -82,7 +82,7 @@ export function AngleRow({ status, client, hotkeys = {}, native = false }: Props
               native={native}
               fallback={<canvas ref={(el) => (canvases.current[i] = el)} aria-hidden="true" />}
             />
-            {target && <span className="aim" style={{ borderColor: cameraColor(i) }} />}
+            {target && <span className="aim" style={{ borderColor: cameraColor(i), color: cameraColor(i) }} />}
             <span className="foot">
               <span className="num" style={{ background: cameraColor(i) }}>{i + 1}</span>
               <b>{input.name}</b>

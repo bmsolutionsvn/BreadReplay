@@ -16,7 +16,7 @@ export function ControlsBar({ client, lastN, hotkeys = {}, target, onMark }: Pro
   const mark = (c: Command) => (onMark ? onMark(c) : void client.send(c));
   const badge = target && (
     <>
-      <span className="aimmini" style={{ borderColor: target.color }} />
+      <span className="aimmini" style={{ borderColor: target.color, color: target.color }} />
       <span className="num" style={{ background: target.color }}>{target.num}</span>
     </>
   );

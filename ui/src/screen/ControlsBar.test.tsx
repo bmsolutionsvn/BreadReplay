@@ -13,8 +13,12 @@ test('ControlsBar: Take sends take', () => {
 test('ControlsBar: Mark buttons carry the target camera number', () => {
   const client = { send: vi.fn().mockResolvedValue({ ok: true }) };
   render(<ControlsBar client={client} lastN={12} target={{ num: 2, color: '#e4a94b' }} />);
-  expect(screen.getByRole('button', { name: /^Mark start/ })).toHaveTextContent('2');
-  expect(screen.getByRole('button', { name: /^Mark end/ })).toHaveTextContent('2');
+  const start = screen.getByRole('button', { name: /^Mark start/ });
+  const end = screen.getByRole('button', { name: /^Mark end/ });
+  expect(start).toHaveTextContent('2');
+  expect(end).toHaveTextContent('2');
+  expect(start.querySelector('.aimmini')).toHaveStyle({ borderColor: '#e4a94b', color: '#e4a94b' });
+  expect(end.querySelector('.aimmini')).toHaveStyle({ borderColor: '#e4a94b', color: '#e4a94b' });
 });
 
 test('ControlsBar: buttons show their keys, remapped ones included', () => {

@@ -29,7 +29,9 @@ const two: Status = {
 
 test('AngleRow: the mark target is framed and the others dim', () => {
   render(<AngleRow client={{ send: vi.fn() }} status={two} />);
-  expect(screen.getByRole('button', { name: 'Angle Cam 2' })).toHaveClass('target');
+  const target = screen.getByRole('button', { name: 'Angle Cam 2' });
+  expect(target).toHaveClass('target');
+  expect(target.querySelector('.aim')).toHaveStyle({ borderColor: '#e4a94b', color: '#e4a94b' });
   expect(screen.getByRole('button', { name: 'Angle Cam 1' })).toHaveClass('dim');
 });
 
