@@ -15,6 +15,8 @@
 #include "support/test_media.h"
 
 namespace {
+constexpr int64_t kS = 1'000'000;
+
 struct Fixture {
   bc::test::TempDir dir;
   std::unique_ptr<bc::GpuDevice> gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
@@ -120,6 +122,44 @@ TEST_CASE("Router: take copies Preview to Output and plays it") {
   CHECK(after.posUs == before.posUs);
   CHECK(after.angle == before.angle);
   CHECK(f.engine->playerFor("preview").state().playing);  // Preview is unchanged
+}
+
+TEST_CASE("Router: undo reverts a mark and redo brings it back") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  r.handle({{"cmd", "mark.lastN"}, {"n", 1}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  CHECK(f.engine->events().events().empty());
+  CHECK(r.handle({{"cmd", "edit.redo"}})["done"] == true);
+  CHECK(f.engine->events().events().size() == 1);
+}
+
+TEST_CASE("Router: a command that changes nothing adds no undo step") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  r.handle({{"cmd", "event.trim"}, {"id", 42}, {"inFrames", 1}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == false);
+}
+
+TEST_CASE("Router: event.update takes speeds and zooms") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  const auto& e = *f.engine->events().find(id);
+  r.handle({{"cmd", "event.update"}, {"id", id},
+            {"speeds", {{{"tUs", e.inUs + kS}, {"speed", 0.25}}, {{"tUs", e.inUs}, {"speed", 1.0}}}},
+            {"zooms", {{{"tUs", e.inUs}, {"rect", {{"cx", 0.4}, {"cy", 0.5}, {"scale", 2.0}}}}}}});
+  REQUIRE(e.speeds.size() == 2);
+  CHECK(e.speeds[0].speed == doctest::Approx(1.0));
+  CHECK(e.zooms[0].rect.scale == doctest::Approx(2.0));
+}
+
+TEST_CASE("Router: a new show clears undo history") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  r.handle({{"cmd", "mark.lastN"}, {"n", 1}});
+  r.handle({{"cmd", "show.new"}, {"name", "Reopen"}, {"folder", f.dir.path.string()}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == false);
 }
 
 TEST_CASE("Router: status carries remainingS") {

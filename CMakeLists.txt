@@ -43,6 +43,7 @@ add_library(br_core STATIC
   src/store/retention.cpp
   src/record/recorder.cpp
   src/events/event_store.cpp
+  src/events/edit_history.cpp
   src/events/show_file.cpp
   src/play/player.cpp
   src/play/frame_source.cpp
@@ -83,6 +84,7 @@ add_executable(br_tests
   tests/retention_test.cpp
   tests/recorder_test.cpp
   tests/event_store_test.cpp
+  tests/edit_history_test.cpp
   tests/show_file_test.cpp
   tests/player_test.cpp
   tests/frame_source_test.cpp

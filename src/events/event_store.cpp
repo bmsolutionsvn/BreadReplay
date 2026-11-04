@@ -275,6 +275,12 @@ std::vector<ProtectedRange> EventStore::protectedRanges() const {
   return out;
 }
 
+void EventStore::restoreFrom(const EventStore& snap) {
+  const uint64_t old = version_;
+  *this = snap;
+  version_ = std::max(old, snap.version_) + 1;
+}
+
 nlohmann::json EventStore::toJson() const {
   nlohmann::json j;
   j["version"] = version_;

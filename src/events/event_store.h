@@ -78,6 +78,8 @@ class EventStore {
     preRollUs_ = preUs;
     postRollUs_ = postUs;
   }
+  // Replaces everything and leaves only the version newer than both, so clients see a change.
+  void restoreFrom(const EventStore& snap);
   nlohmann::json toJson() const;
   static EventStore fromJson(const nlohmann::json&);
   double defaultSpeed = 0.5;

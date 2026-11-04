@@ -298,6 +298,7 @@ void Engine::openShow(Show show, std::filesystem::path folder) {
   show_ = std::move(show);
   folder_ = std::move(folder);
   showJson_ = folder_ / "show.json";
+  history_.clear();
   show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
                        static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
   eventsVersionSent_ = 0;
@@ -565,6 +566,7 @@ nlohmann::json Engine::statusJson() {
   }
   j["players"] = players;
   j["events"] = {{"version", show_.events.version()}};
+  j["edit"] = {{"canUndo", history_.canUndo()}, {"canRedo", history_.canRedo()}};
   j["nativeVideo"] = surfaces_ ? nlohmann::json(true)
                                : nlohmann::json(nativeReason_.empty() ? "native video is off" : nativeReason_);
   return j;
@@ -782,7 +784,7 @@ void Engine::statusLoop() {
 
 nlohmann::json Engine::handle(const nlohmann::json& cmd) {
   std::lock_guard lock(cmdM_);
-  return CommandRouter(*this).handle(cmd);
+  return router_.handle(cmd);
 }
 
 }  // namespace br

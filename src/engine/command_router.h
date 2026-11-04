@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+
 #include <nlohmann/json.hpp>
 
 namespace br {
@@ -11,6 +13,8 @@ class CommandRouter {
   nlohmann::json handle(const nlohmann::json& cmd);
 
  private:
+  nlohmann::json handleImpl(const nlohmann::json& cmd);
+  bool isEdit(const std::string& name, const nlohmann::json& cmd) const;
   int64_t markTime(bool lastN) const;
   std::string markAngle() const;
   Engine& engine_;
