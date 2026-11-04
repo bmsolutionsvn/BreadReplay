@@ -191,6 +191,22 @@ TEST_CASE("InputStore: codec follows the segment header") {
   CHECK(store.codecOf(*second) == br::StoredCodec::Hevc);
 }
 
+TEST_CASE("InputStore: a compressed segment rolls at a keyframe, not on the minute") {
+  bc::test::TempDir dir;
+  auto h = proto();
+  h.codec = br::StoredCodec::Hevc;
+  br::InputStore store(dir.path, h);
+  const int64_t base = noon();
+  store.append(base + 59'900'000, video(0), 0, audio(0), true);
+  store.append(base + 60'033'333, video(1), 0, audio(1), false);  // the minute changed mid-GOP
+  store.append(base + 60'066'666, video(2), 0, audio(2), false);
+  CHECK(store.droppedBeforeKeyframe() == 0);
+  CHECK(store.frameCount() == 3);
+  CHECK(store.segments().size() == 1);
+  store.append(base + 60'100'000, video(3), 0, audio(3), true);  // the next keyframe starts a segment
+  CHECK(store.segments().size() == 2);
+}
+
 TEST_CASE("InputStore: a 30 fps input in a 59.94 show is one continuous range") {
   bc::test::TempDir dir;
   auto show = proto();

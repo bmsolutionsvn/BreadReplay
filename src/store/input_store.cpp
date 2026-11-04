@@ -56,14 +56,20 @@ void InputStore::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t p
                         std::span<const float> audio, bool keyframe) {
   std::unique_lock lock(m_);
   const int64_t key = minuteKey(tsUs);
-  if (!segs_.empty() && segs_.back().writer && !segs_.back().times.empty() &&
-      minuteKey(segs_.back().times.back()) != key) {
+  // Compare the minute with the segment's start, so a segment that crossed a minute mid-GOP still
+  // rolls at the first keyframe after it.
+  const bool minuteChanged = !segs_.empty() && !segs_.back().times.empty() &&
+                             minuteKey(segs_.back().times.front()) != key;
+  // A compressed segment rolls at the first keyframe after the minute, not mid-GOP: closing on
+  // the minute would throw away every frame until the next keyframe.
+  if (minuteChanged && keyframe && !forceNewSegment_ && segs_.back().writer) {
     segs_.back().writer->close();
     segs_.back().writer.reset();
   }
   const bool continuing = !forceNewSegment_ && !segs_.empty() && !segs_.back().times.empty() &&
-                          minuteKey(segs_.back().times.back()) == key &&
-                          (segs_.back().writer || !segs_.back().reader->records().empty());
+                          (segs_.back().writer ||
+                           (minuteKey(segs_.back().times.back()) == key &&
+                            !segs_.back().reader->records().empty()));
   if (!keyframe && !continuing) {
     ++droppedBeforeKeyframe_;
     return;

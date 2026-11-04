@@ -14,6 +14,7 @@ extern "C" {
 #include <set>
 
 #include "core/timecode.h"
+#include "engine/packet_convert.h"
 #include "engine/preview_encoder.h"
 #include "io/remux.h"
 #include "engine/adapter_factory.h"
@@ -60,6 +61,8 @@ bool hasNal(std::span<const uint8_t> d, int type, bool hevc) {
   }
   return false;
 }
+
+}  // namespace
 
 bool hasParameterSets(std::span<const uint8_t> d, StoredCodec codec) {
   if (codec == StoredCodec::Hevc) return hasNal(d, 32, true) && hasNal(d, 33, true) && hasNal(d, 34, true);
@@ -119,7 +122,26 @@ std::vector<uint8_t> extradataAnnexB(const AVCodecParameters& p, StoredCodec cod
   if (codec == StoredCodec::Hevc) return hvccToAnnexB(ex);
   return {};
 }
-}  // namespace
+
+std::vector<uint8_t> packetToAnnexB(std::vector<uint8_t> au, StoredCodec codec) {
+  if (isAnnexB(au)) return au;
+  if (codec == StoredCodec::H264) {
+    auto converted = avccPacketToAnnexB(au);
+    if (!converted.empty()) return converted;
+  }
+  return au;  // shortcut: non-Annex-B HEVC is left as received; add when a source needs it
+}
+
+void prependParameterSets(std::vector<uint8_t>& au, const AVCodecParameters& p, StoredCodec codec) {
+  if (hasParameterSets(au, codec)) return;
+  const auto sets = extradataAnnexB(p, codec);
+  if (sets.empty()) return;
+  std::vector<uint8_t> out;
+  out.reserve(sets.size() + au.size());
+  out.insert(out.end(), sets.begin(), sets.end());
+  out.insert(out.end(), au.begin(), au.end());
+  au = std::move(out);
+}
 
 Engine::Engine(EngineDeps deps, Show show, std::filesystem::path folder)
     : deps_(std::move(deps)), show_(std::move(show)), folder_(std::move(folder)) {
@@ -140,6 +162,8 @@ void Engine::Sink::onAudio(bc::AudioBlock a) {
 }
 
 void Engine::Sink::onState(bc::SignalState s, std::optional<bc::ErrorInfo>) {
+  // A reconnect may bring a different codec; let the picture tap be re-decided then.
+  if (s == bc::SignalState::Connecting || s == bc::SignalState::Offline) coded_ = false;
   std::lock_guard lock(engine.m_);
   engine.inputStates_[inputId] = stateName(s);
 }
@@ -171,20 +195,11 @@ void Engine::Sink::onPacket(std::shared_ptr<const bc::MediaPacket> p) {
   if (!p->pkt) return;
   auto* rec = engine.recorderFor(inputId);
   if (!rec) return;
-  std::vector<uint8_t> au(p->pkt->data, p->pkt->data + p->pkt->size);
-  if (!isAnnexB(au)) au = avccPacketToAnnexB(au);
+  std::vector<uint8_t> au = packetToAnnexB(
+      std::vector<uint8_t>(p->pkt->data, p->pkt->data + p->pkt->size), codec);
   if (au.empty()) return;
   const bool keyframe = (p->pkt->flags & AV_PKT_FLAG_KEY) != 0;
-  if (keyframe && !hasParameterSets(au, codec)) {
-    const auto sets = extradataAnnexB(*p->params, codec);
-    if (!sets.empty()) {
-      std::vector<uint8_t> withSets;
-      withSets.reserve(sets.size() + au.size());
-      withSets.insert(withSets.end(), sets.begin(), sets.end());
-      withSets.insert(withSets.end(), au.begin(), au.end());
-      au = std::move(withSets);
-    }
-  }
+  if (keyframe) prependParameterSets(au, *p->params, codec);
   rec->pushCodedAu(engine.now(), codec, static_cast<uint32_t>(p->params->width),
                    static_cast<uint32_t>(p->params->height), keyframe, std::move(au));
 }

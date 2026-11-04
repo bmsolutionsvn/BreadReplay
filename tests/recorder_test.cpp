@@ -143,6 +143,7 @@ TEST_CASE("Recorder: pushCodedAu stores from the first keyframe with flags and b
   CHECK(rec.stats().encodeMsAvg == 0.0);
   CHECK(store.frameCount() == 2);
   CHECK(store.droppedBeforeKeyframe() == 2);
+  CHECK(rec.stats().dropped == 2);  // store drops are visible to the recorder's stats
 
   auto key = store.find(base + 2);
   REQUIRE(key.has_value());
@@ -156,6 +157,25 @@ TEST_CASE("Recorder: pushCodedAu stores from the first keyframe with flags and b
   CHECK(p->index == 1);
   CHECK_FALSE(store.isKeyframe(*p));
   CHECK(store.readVideo(*p, false) == au(4));
+}
+
+TEST_CASE("Recorder: a codec change starts a new segment") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  br::Recorder rec(store, br::VmxQuality::SQ, 32, 1);
+  const int64_t base = baseTs();
+  rec.pushCodedAu(base, br::StoredCodec::Hevc, 320, 180, true, std::vector<uint8_t>(8, 7));
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 1; }, 5000));
+
+  Frame src(320, 180, 77);
+  br::VmxEncoder enc(320, 180, br::VmxQuality::SQ);
+  const auto encoded = enc.encode(src.frame);
+  rec.pushCoded(base + 1, encoded.bytes);  // plain OMT after HX at the same size
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 2; }, 5000));
+  rec.stop();
+  REQUIRE(store.segments().size() == 2);
+  CHECK(store.codecOf(br::FrameRef{0, 0, 0}) == br::StoredCodec::Hevc);
+  CHECK(store.codecOf(br::FrameRef{1, 0, 0}) == br::StoredCodec::Vmx);
 }
 
 TEST_CASE("Recorder: a size change starts a new segment") {

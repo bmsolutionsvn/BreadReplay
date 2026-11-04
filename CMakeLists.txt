@@ -92,6 +92,7 @@ add_executable(br_tests
   tests/router_test.cpp
   tests/engine_test.cpp
   tests/engine_discovery_test.cpp
+  tests/packet_convert_test.cpp
 )
 target_include_directories(br_tests PRIVATE "${BR_BREADCAMERA_DIR}/tests")
 target_link_libraries(br_tests PRIVATE br_engine doctest::doctest)

@@ -274,26 +274,29 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
   engine.playerFor("preview").pause();
   std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-  auto& out = engine.playerFor("output");
-  out.cueAt(cueT, "cam0");
-  out.setDirection(-1);
-  out.play();
   auto* op = engine.outputPlayer();
   REQUIRE(op);
+  op->stop();  // drive the ticks from this thread: the engine's own Output thread is stopped
+  auto& out = engine.playerFor("output");
+  out.cueAt(cueT, "cam0");
+  out.play();
   const uint64_t before = engine.frameSource() ? engine.frameSource()->decodes() : 0;
   int black = 0;
-  for (int i = 0; i < 30; ++i) {
+  const auto draw = [&] {
     op->tickOnce();
     const auto pic = op->lastPicture();
     if (!pic) {
       ++black;
-      continue;
+      return;
     }
     auto rgb = f.conv.toBgra8(*pic, pic->width, pic->height);
     const auto img = f.conv.readback(*rgb);
     const size_t c = (static_cast<size_t>(img.height / 2) * img.width + img.width / 2) * 4;
     if (img.bgra[c] + img.bgra[c + 1] + img.bgra[c + 2] < 12) ++black;
-  }
+  };
+  for (int i = 0; i < 5; ++i) draw();  // forward from the cue
+  out.setDirection(-1);
+  for (int i = 0; i < 30; ++i) draw();
   const uint64_t decoded = engine.frameSource() ? engine.frameSource()->decodes() - before : 0;
   const auto stats = engine.recorderStats("cam0");
   engine.stop();

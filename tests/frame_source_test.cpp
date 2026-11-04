@@ -308,6 +308,19 @@ TEST_CASE("FrameSource: prefetch makes the next get a cache hit") {
   CHECK(src.diskReads() == before);
 }
 
+TEST_CASE("FrameSource: the frame cache is per input") {
+  Store a(320, 180, {kBase, kBase + kStep, kBase + 2 * kStep});
+  Store b(320, 180, {kBase, kBase + kStep, kBase + 2 * kStep});
+  br::FrameSource src({{"a", a.store.get()}, {"b", b.store.get()}}, nullptr, nullptr, 1, 2);
+  REQUIRE(src.get("a", kBase));
+  REQUIRE(src.get("a", kBase + kStep));
+  REQUIRE(src.get("b", kBase));
+  REQUIRE(src.get("b", kBase + kStep));
+  const auto before = src.diskReads();
+  REQUIRE(src.get("a", kBase));
+  CHECK(src.diskReads() == before);  // b's frames must not evict a's
+}
+
 TEST_CASE("FrameSource: a long-GOP H.264 recording decodes on the GPU with seek and cache"
           BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
@@ -356,6 +369,15 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording decodes on the GPU with seek 
   int worst = 0;
   for (size_t i = 0; i < y47.size(); ++i) worst = std::max(worst, std::abs(static_cast<int>(y47[i]) - want47[i]));
   CHECK(worst <= 2);
+
+  // Forward playback after a B-frame seek continues the decoder instead of re-seeking.
+  const auto beforeForward = src.decodes();
+  for (int i = 48; i <= 52; ++i) {
+    const auto f = src.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
+    REQUIRE(f);
+    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  }
+  CHECK(src.decodes() - beforeForward <= 20);
 
   // Review focus 2: stepping back from 59 to 31 after the first seek stays in the cache.
   const auto f59 = src.get("cam1", kBase + 59 * 33333);

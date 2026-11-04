@@ -5,6 +5,8 @@
 #include <numeric>
 #include <thread>
 
+#include "core/vmx_codec.h"
+#include "play/frame_source.h"
 #include "store/input_store.h"
 #include "store/segment.h"
 #include "support/temp_dir.h"
@@ -41,8 +43,9 @@ void put64(std::vector<uint8_t>& o, int64_t v) {
   o.insert(o.end(), reinterpret_cast<const uint8_t*>(&v), reinterpret_cast<const uint8_t*>(&v) + 8);
 }
 
-// Byte fixture in the v1 layout: version 1, no codec field, reserved = 0.
-std::filesystem::path writeV1Segment(const std::filesystem::path& base, int frames) {
+// Byte fixture in the v1 layout: version 1, no codec field, reserved = 0. The frames are real VMX
+// pictures, so the same bytes still decode after the upgrade.
+std::vector<std::vector<uint8_t>> writeV1Segment(const std::filesystem::path& base, int frames) {
   std::vector<uint8_t> idx;
   put32(idx, 1);
   put32(idx, 4);
@@ -54,15 +57,26 @@ std::filesystem::path writeV1Segment(const std::filesystem::path& base, int fram
   put16(idx, 2);
   put32(idx, 48000);
 
+  br::VmxEncoder enc(320, 180, br::VmxQuality::SQ);
+  std::vector<std::vector<uint8_t>> encoded;
   std::vector<uint8_t> ess;
   for (int i = 0; i < frames; ++i) {
     const int64_t ts = 1'000'000 + i * 16683;
-    const auto video = makeVideo(i);
+    std::vector<uint8_t> uyvy(static_cast<size_t>(320) * 180 * 2, static_cast<uint8_t>(40 + i * 20));
+    bc::CpuVideoFrame f;
+    f.data = uyvy.data();
+    f.stride = 320 * 2;
+    f.width = 320;
+    f.height = 180;
+    f.format = bc::CpuPixel::UYVY;
+    const auto frame = enc.encode(f);
+    const auto& video = frame.bytes;
+    encoded.push_back(video);
     const int64_t offset = static_cast<int64_t>(ess.size());
     put64(idx, ts);
     put64(idx, offset);
     put32(idx, static_cast<uint32_t>(video.size()));
-    put32(idx, 8);
+    put32(idx, frame.previewLen);
     put32(idx, 0);
     put32(idx, 0);  // reserved
 
@@ -70,12 +84,12 @@ std::filesystem::path writeV1Segment(const std::filesystem::path& base, int fram
     put64(ess, ts);
     put32(ess, static_cast<uint32_t>(video.size()));
     put32(ess, 0);
-    put32(ess, 8);
+    put32(ess, frame.previewLen);
     ess.insert(ess.end(), video.begin(), video.end());
   }
   std::ofstream(base.string() + ".vmxi", std::ios::binary).write(reinterpret_cast<const char*>(idx.data()), static_cast<std::streamsize>(idx.size()));
   std::ofstream(base.string() + ".vmxs", std::ios::binary).write(reinterpret_cast<const char*>(ess.data()), static_cast<std::streamsize>(ess.size()));
-  return base;
+  return encoded;
 }
 }  // namespace
 
@@ -218,7 +232,8 @@ TEST_CASE("Segment: v2 HEVC round-trips codec, keyframe flags and bytes") {
 
 TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
   bc::test::TempDir dir;
-  const auto base = writeV1Segment(dir.path / "v1", 3);
+  const auto base = dir.path / "v1";
+  const auto encoded = writeV1Segment(base, 3);
   auto r = br::SegmentReader::open(base);
   REQUIRE(r.has_value());
   r->refresh();
@@ -227,7 +242,7 @@ TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
   REQUIRE(r->records().size() == 3);
   for (int i = 0; i < 3; ++i) {
     CHECK(r->records()[static_cast<size_t>(i)].flags == 0u);
-    CHECK(r->readVideo(static_cast<size_t>(i), false) == makeVideo(i));
+    CHECK(r->readVideo(static_cast<size_t>(i), false) == encoded[static_cast<size_t>(i)]);
   }
 
   br::SegmentHeader proto;
@@ -241,6 +256,13 @@ TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
   REQUIRE(ref.has_value());
   CHECK(store.codecOf(*ref) == br::StoredCodec::Vmx);
   CHECK(store.isKeyframe(*ref));
+
+  // It still plays: the v1 frames go through the VMX path as before the upgrade.
+  br::FrameSource source({{"cam1", &store}});
+  const auto frame = source.get("cam1", 1'000'000 + 16'683);
+  REQUIRE(frame);
+  CHECK(frame->tsUs == 1'000'000 + 16'683);
+  CHECK(frame->uyvy.size() == 320u * 180u * 2u);
 }
 
 TEST_CASE("Segment: v2 recovery drops a record whose bytes are missing") {

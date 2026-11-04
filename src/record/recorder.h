@@ -79,6 +79,7 @@ class Recorder {
   uint64_t nextSeq_ = 0;
   uint64_t nextWrite_ = 0;
   uint64_t framesIn_ = 0, framesWritten_ = 0, dropped_ = 0;
+  bool awaitKeyframe_ = false;  // a queued AU was dropped: wait for a keyframe to restart the GOP
   double encodeMsSum_ = 0;
   uint64_t encodeCount_ = 0;
   mutable std::vector<double> encodeTimes_;

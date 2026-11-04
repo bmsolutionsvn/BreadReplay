@@ -45,18 +45,43 @@ void FrameSource::touch(const Key& key) {
 
 size_t FrameSource::bytesOf(const DecodedFrame& f) {
   const size_t pixels = static_cast<size_t>(f.w) * f.h;
-  if (f.picture.tex) return f.picture.layout == bc::PixelLayout::P010 ? pixels * 3 : pixels * 3 / 2;
+  if (f.picture.tex) {
+    if (f.picture.layout == bc::PixelLayout::P010) return pixels * 3;
+    if (f.picture.layout == bc::PixelLayout::BGRA8) return pixels * 4;
+    return pixels * 3 / 2;
+  }
   return f.uyvy.size();
 }
 
 void FrameSource::evict() {
-  while (!lru_.empty() && (cache_.size() > cacheFrames_ || cacheBytes_ > kCacheBytesTotal)) {
-    const Key old = lru_.back();
-    lru_.pop_back();
+  std::map<std::string, size_t> counts;
+  for (const auto& [key, frame] : cache_) ++counts[key.input];
+  while (!lru_.empty()) {
+    std::string over;
+    for (const auto& [input, n] : counts) {
+      if (n > cacheFrames_) {
+        over = input;
+        break;
+      }
+    }
+    if (over.empty() && cacheBytes_ <= kCacheBytesTotal) break;
+    // Evict this input's least recently used frame (or the global LRU for the byte budget).
+    auto victim = lru_.end();
+    for (auto it = lru_.end(); it != lru_.begin();) {
+      --it;
+      if (over.empty() || it->input == over) {
+        victim = it;
+        break;
+      }
+    }
+    if (victim == lru_.end()) break;
+    const Key old = *victim;
+    lru_.erase(victim);
     auto it = cache_.find(old);
     if (it == cache_.end()) continue;
     cacheBytes_ -= bytesOf(*it->second);
     cache_.erase(it);
+    if (const auto n = counts.find(old.input); n != counts.end() && n->second > 0) --n->second;
   }
 }
 
@@ -74,7 +99,14 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
     touch(key);
     return it->second;
   }
-  if (store.codecOf(*ref) != StoredCodec::Vmx) return getCompressed(inputId, store, *ref, lane);
+  if (store.codecOf(*ref) != StoredCodec::Vmx) {
+    // An unsupported profile or a failed allocation holds the last picture, never kills the tick.
+    try {
+      return getCompressed(inputId, store, *ref, lane);
+    } catch (const std::exception&) {
+      return nullptr;
+    }
+  }
 
   const auto& header = store.header();
   // Decode at the size this frame was recorded at: an input can change size mid-show.
@@ -141,29 +173,43 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   const auto k = store.keyframeAtOrBefore(ref);
   if (!k || k->segment != ref.segment) return nullptr;
   const size_t seg = ref.segment;
-  size_t start = k->index;
-  if (d.primed && d.seg == seg && d.fedIndex != SIZE_MAX && d.fedIndex < ref.index) {
-    start = d.fedIndex + 1;  // carry on from the last access unit fed
+  const Key want{id, ref.tsUs};
+  const size_t count = store.frameCountIn(seg);
+
+  const auto feed = [&](size_t start) {
+    for (size_t i = start; i < count; ++i) {
+      const auto fr = store.frameAt(seg, i);
+      if (!fr) break;
+      const auto au = store.readVideo(*fr, false);
+      if (au.empty()) break;
+      d.hx->decode(au, fr->tsUs, [&](bc::VideoFrameIn pic) { cachePicture(id, store, std::move(pic), w, h); });
+      d.primed = true;
+      d.seg = seg;
+      d.fedIndex = i;
+      if (i < ref.index) continue;
+      if (cache_.count(want)) return true;
+      // A B-frame's picture comes out after the references that follow it; feed on until it does.
+      if (i > ref.index + 16) break;
+    }
+    return cache_.count(want) != 0;
+  };
+
+  // Carry on when the decoder is at or before the target, or in the reorder tail just past it.
+  const bool carryOn = d.primed && d.seg == seg && d.fedIndex != SIZE_MAX && d.fedIndex >= k->index &&
+                       (d.fedIndex < ref.index || ref.index + 16 >= d.fedIndex);
+  bool found = false;
+  if (carryOn) {
+    found = feed(d.fedIndex + 1);
   } else {
     d.hx->reset();  // seek: the keyframe is the first decodable frame
     d.primed = false;
+    found = feed(k->index);
   }
-
-  const Key want{id, ref.tsUs};
-  const size_t count = store.frameCountIn(seg);
-  for (size_t i = start; i < count; ++i) {
-    const auto fr = store.frameAt(seg, i);
-    if (!fr) break;
-    const auto au = store.readVideo(*fr, false);
-    if (au.empty()) break;
-    d.hx->decode(au, fr->tsUs, [&](bc::VideoFrameIn pic) { cachePicture(id, store, std::move(pic), w, h); });
-    d.primed = true;
-    d.seg = seg;
-    d.fedIndex = i;
-    if (i < ref.index) continue;
-    if (cache_.count(want)) break;
-    // A B-frame's picture comes out after the references that follow it; feed on until it does.
-    if (i > ref.index + 16) break;
+  if (!found && carryOn) {
+    // The picture was fed earlier and has left the cache since: one seek is the only way back.
+    d.hx->reset();
+    d.primed = false;
+    feed(k->index);
   }
   const auto it = cache_.find(want);
   return it == cache_.end() ? nullptr : it->second;
@@ -197,6 +243,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
     return image;
   }
 
+  try {
   if (!gpu_ || !pool_ || !conv_) return nullptr;
   const auto key = store.keyframeAtOrBefore(*ref);
   if (!key || key->segment != ref->segment) return nullptr;
@@ -244,6 +291,9 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
     ++diskReads_;
   }
   return image;
+  } catch (const std::exception&) {
+    return nullptr;
+  }
 }
 
 }  // namespace br

@@ -104,8 +104,13 @@ TEST_CASE("Renderer: an NV12 picture renders through the GPU converter") {
   Gpu g;
   br::Renderer r(*g.dev, g.pool, g.conv, 1920, 1080);
   const uint32_t w = 640, h = 360;
-  const std::vector<uint8_t> y(static_cast<size_t>(w) * h, 128);
-  const std::vector<uint8_t> uv(static_cast<size_t>(w) * h / 2, 128);
+  // Limited-range BT.601 red (Y=81, U=90, V=240): a wrong matrix or range shows immediately.
+  const std::vector<uint8_t> y(static_cast<size_t>(w) * h, 81);
+  std::vector<uint8_t> uv(static_cast<size_t>(w) * h / 2);
+  for (size_t i = 0; i < uv.size(); i += 2) {
+    uv[i] = 90;    // U
+    uv[i + 1] = 240;  // V
+  }
   bc::TextureRef tex;
   {
     auto lock = g.dev->lock();
@@ -118,7 +123,9 @@ TEST_CASE("Renderer: an NV12 picture renders through the GPU converter") {
   f.picture.layout = bc::PixelLayout::NV12;
   const auto out = r.render(f, br::ZoomRect{});
   const auto px = readPixel(g.conv, out, 1920, 1080, 960, 540);
-  for (int c = 0; c < 3; ++c) CHECK(std::abs(channel(px, c) - 128) <= 6);
+  CHECK(channel(px, 2) > 200);  // red
+  CHECK(channel(px, 1) < 70);
+  CHECK(channel(px, 0) < 70);
 }
 
 TEST_CASE("Renderer: mix at 0.5 averages") {

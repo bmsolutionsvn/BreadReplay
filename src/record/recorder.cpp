@@ -65,9 +65,17 @@ void Recorder::pushCoded(int64_t tsUs, std::vector<uint8_t> vmx) {
 void Recorder::pushCodedAu(int64_t tsUs, StoredCodec codec, uint32_t w, uint32_t h, bool keyframe,
                            std::vector<uint8_t> au) {
   std::unique_lock lock(m_);
+  if (awaitKeyframe_) {
+    if (!keyframe) {
+      ++dropped_;
+      return;
+    }
+    awaitKeyframe_ = false;
+  }
   ++framesIn_;
   if (static_cast<int>(queue_.size()) >= queueDepth_) {
     ++dropped_;
+    awaitKeyframe_ = true;  // the rest of this GOP references a picture that is not stored
     return;
   }
   Job j;
@@ -104,7 +112,7 @@ RecorderStats Recorder::stats() const {
   RecorderStats s;
   s.framesIn = framesIn_;
   s.framesWritten = framesWritten_;
-  s.dropped = dropped_;
+  s.dropped = dropped_ + store_.droppedBeforeKeyframe();
   s.queued = static_cast<int>(queue_.size());
   s.encodeMsAvg = encodeCount_ ? encodeMsSum_ / static_cast<double>(encodeCount_) : 0;
   if (!encodeTimes_.empty()) {
@@ -197,9 +205,10 @@ void Recorder::writerLoop() {
     }
     // Compare with the store's header, not the previous frame: an input whose first frame is not
     // the show size (a 720p observer in a 1080p show) must start a segment with its own size.
+    const StoredCodec codec = d.codedAu ? d.codec : StoredCodec::Vmx;
     if (d.w && d.h && (d.w != store_.header().width || d.h != store_.header().height ||
-                       (d.codedAu && d.codec != store_.header().codec))) {
-      store_.changeVideoFormat(d.w, d.h, store_.header().rate, d.codedAu ? d.codec : StoredCodec::Vmx);
+                       codec != store_.header().codec)) {
+      store_.changeVideoFormat(d.w, d.h, store_.header().rate, codec);
     }
     if (d.codedAu) {
       store_.append(d.tsUs, d.raw, 0, d.audio, d.keyframe);
