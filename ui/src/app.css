@@ -192,6 +192,9 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .tl .order-row .order-lane { display: flex; gap: 4px; overflow: hidden; }
 .tl .order { position: relative; padding: 1px 6px; border-radius: 3px; background: #263241; color: var(--bm-text); font-size: 11px; cursor: grab; white-space: nowrap; }
 .tl .order.dragging { outline: 1px dashed var(--bm-text-muted); }
+.tl .tl-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.tl .tl-actions button { width: 28px; height: 28px; padding: 0; border: 1px solid var(--bm-border); border-radius: 3px; background: var(--bm-rail); color: var(--bm-text); font-size: 16px; line-height: 1; }
+.tl .tl-actions button:disabled { opacity: .35; }
 
 /* status bar */
 .status { display: flex; align-items: center; gap: 12px; padding: 5px 10px; background: var(--bm-rail); border-top: 1px solid var(--bm-border); font: 400 11px var(--mono); color: var(--bm-text-dim); min-width: 0; overflow: hidden; }

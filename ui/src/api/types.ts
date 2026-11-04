@@ -52,6 +52,7 @@ export interface Status {
   hotkeys?: Record<string, string>;
   players: { preview: PlayerStatus; output: OutputPlayerStatus };
   events: { version: number };
+  edit?: { canUndo: boolean; canRedo: boolean };
   nativeVideo?: true | string;
 }
 

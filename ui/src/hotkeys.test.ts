@@ -58,6 +58,25 @@ test('Ctrl+A selects all even when a list row has focus; Space on a focused butt
   expect(keyToCommand(onButton({ key: ' ' }), hotkeyMap())).toBeNull();
 });
 
+test('edit keys map to their commands', () => {
+  expect(keyToCommand(key('s'), defaultHotkeys, ctx)).toEqual({ cmd: 'ui.split' });
+  expect(keyToCommand(key('f'), defaultHotkeys, ctx)).toEqual({ cmd: 'ui.fit' });
+  expect(keyToCommand(key('Delete'), defaultHotkeys, ctx)).toEqual({ cmd: 'ui.delete' });
+  expect(keyToCommand(key('z', { ctrlKey: true }), defaultHotkeys, ctx)).toEqual({ cmd: 'edit.undo' });
+  expect(keyToCommand(key('y', { ctrlKey: true }), defaultHotkeys, ctx)).toEqual({ cmd: 'edit.redo' });
+  expect(keyToCommand(key('z', { ctrlKey: true, shiftKey: true }), defaultHotkeys, ctx)).toEqual({ cmd: 'edit.redo' });
+});
+
+test('Delete does nothing while a text field has focus', () => {
+  const input = document.createElement('input');
+  expect(keyToCommand(key('Delete', { target: input }), hotkeyMap(), ctx)).toBeNull();
+});
+
+test('S still splits while a list row has focus', () => {
+  const button = document.createElement('button');
+  expect(keyToCommand(key('s', { target: button }), hotkeyMap(), ctx)).toEqual({ cmd: 'ui.split' });
+});
+
 test('a key without a mapping returns null', () => {
   expect(keyToCommand(key('q'), defaultHotkeys, ctx)).toBeNull();
 });

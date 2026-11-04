@@ -14,6 +14,7 @@ import { groupOf } from './screen/selection';
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
+import { deleteBlock, split } from './screen/timelineEdits';
 import { TitleBar } from './screen/TitleBar';
 import { setEvents, setStatus, useEvents, useStatus } from './state/store';
 
@@ -28,7 +29,7 @@ export function App({ client }: { client: Client }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<number | null>(null);
-  const [fitKey] = useState(0);
+  const [fitKey, setFitKey] = useState(0);
   const [stamp, setStamp] = useState<MarkStamp | null>(null);
   const [lastMark, setLastMark] = useState<MarkStamp | null>(null);
   const stampTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -95,6 +96,10 @@ export function App({ client }: { client: Client }) {
     setSelectedIds([last]);
   }, [events, selected]);
 
+  const event = events?.events.find((e) => e.id === selected) ?? null;
+  const pos = status?.players.preview.posUs ?? 0;
+  const periodUs = Math.round(1_000_000 / FPS);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (settings) return;
@@ -115,6 +120,21 @@ export function App({ client }: { client: Client }) {
         const ids = (group ? events.lists.find((l) => l.id === group)?.order : events.rootOrder) ?? [];
         setSelectedIds(ids);
         if (selected == null || !ids.includes(selected)) setSelected(ids[0] ?? null);
+      } else if (cmd.cmd === 'ui.split') {
+        if (!event) return;
+        const next = split(event, pos, periodUs);
+        void client.send({ cmd: 'event.update', id: event.id, ...next });
+      } else if (cmd.cmd === 'ui.fit') {
+        setFitKey((k) => k + 1);
+      } else if (cmd.cmd === 'ui.delete') {
+        if (!event) return;
+        if (selectedBlock != null) {
+          void client.send({ cmd: 'event.update', id: event.id, ...deleteBlock(event, selectedBlock) });
+        } else if (selectedIds.length) {
+          void client.send({ cmd: 'event.delete', ids: selectedIds });
+        }
+      } else if (cmd.cmd.startsWith('edit.')) {
+        void client.send(cmd);
       } else if (cmd.cmd.startsWith('mark.')) {
         sendMark(cmd);
       } else {
@@ -123,7 +143,7 @@ export function App({ client }: { client: Client }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings, hotkeys, events, sendMark]);
+  }, [client, status, selected, settings, hotkeys, events, sendMark, event, pos, periodUs, selectedBlock, selectedIds]);
 
   useEffect(() => setSelectedBlock(null), [selected]);
 

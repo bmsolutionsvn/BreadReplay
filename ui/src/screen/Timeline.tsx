@@ -264,6 +264,17 @@ export function Timeline({
       }}
       onWheel={wheel}
     >
+      <div className="tl-row tl-top">
+        <span className="tl-lab" />
+        <div className="tl-actions">
+          <button aria-label="Undo" disabled={!status?.edit?.canUndo} onClick={() => void client.send({ cmd: 'edit.undo' })}>
+            ↶
+          </button>
+          <button aria-label="Redo" disabled={!status?.edit?.canRedo} onClick={() => void client.send({ cmd: 'edit.redo' })}>
+            ↷
+          </button>
+        </div>
+      </div>
       <div className="tl-row game">
         <span className="tl-lab" title="The whole recording. Yellow ticks are saved replays; the box is the part shown below.">Whole recording</span>
         <div className="tl-lane">
