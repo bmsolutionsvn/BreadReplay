@@ -97,6 +97,7 @@ export interface EventStore {
   preRollUs: number;
   postRollUs: number;
   defaultSpeed: number;
+  rootOrder: number[];
   lists: EventList[];
   events: Event[];
 }

@@ -1,4 +1,10 @@
-import { formatDiskLeft, formatDuration, formatRemaining, formatSize, rateFps } from './format';
+import { formatClockTenths, formatDiskLeft, formatDuration, formatRemaining, formatSize, rateFps } from './format';
+
+const local = (h: number, m: number, s: number) => new Date(1970, 0, 1, h, m, s).getTime() * 1000;
+
+test('format: a mark stamp reads to a tenth', () => {
+  expect(formatClockTenths(local(1, 12, 29) + 400_000)).toBe('01:12:29.4');
+});
 
 test('format: remaining 7.4 s at 59.94 prints -00:07:24', () => {
   expect(formatRemaining(7.4, 59.94)).toBe('-00:07:24');

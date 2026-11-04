@@ -50,6 +50,14 @@ test('trim needs a selected event', () => {
   expect(keyToCommand(key(']'), defaultHotkeys, { ...ctx, selectedEventId: null })).toBeNull();
 });
 
+test('Ctrl+A selects all even when a list row has focus; Space on a focused button does not mark', () => {
+  const button = document.createElement('button');
+  expect(keyToCommand(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true }), hotkeyMap())).toEqual({ cmd: 'ui.selectAll' });
+  const onButton = (init: KeyboardEventInit) => { const e = new KeyboardEvent('keydown', init); Object.defineProperty(e, 'target', { value: button }); return e; };
+  expect(keyToCommand(onButton({ key: 'a', ctrlKey: true }), hotkeyMap())).toEqual({ cmd: 'ui.selectAll' });
+  expect(keyToCommand(onButton({ key: ' ' }), hotkeyMap())).toBeNull();
+});
+
 test('a key without a mapping returns null', () => {
   expect(keyToCommand(key('q'), defaultHotkeys, ctx)).toBeNull();
 });

@@ -12,6 +12,7 @@ const events: EventStore = {
   preRollUs: 0,
   postRollUs: 0,
   defaultSpeed: 0.5,
+  rootOrder: [],
   lists: [{ id: 'g1', name: 'Game 1', order: [2] }],
   events: [{ id: 2, listId: 'g1', name: '', tags: [], angleNotes: {}, inUs: 0, outUs: 12_000_000, angles: [], speeds: [], zooms: [] }],
 };
@@ -20,7 +21,7 @@ function setup() {
   const client = { send: vi.fn().mockResolvedValue({ ok: true }) };
   render(
     <ContextMenuHost>
-      <EventList client={client} events={events} selectedId={null} onSelect={() => {}} />
+      <EventList client={client} events={events} selectedId={null} selectedIds={[]} onSelect={() => {}} />
       <input aria-label="Name" />
     </ContextMenuHost>,
   );

@@ -12,20 +12,7 @@ void overwriteFrom(std::vector<Point>& points, int64_t t) {
 }  // namespace
 
 EventStore::EventStore(int64_t preRollUs, int64_t postRollUs)
-    : preRollUs_(preRollUs), postRollUs_(postRollUs) {
-  ensureList();
-}
-
-void EventStore::ensureList() {
-  if (lists_.empty()) {
-    EventList l;
-    l.id = "list-1";
-    l.name = "Game 1";
-    lists_.push_back(l);
-    nextListId_ = 2;
-  }
-  if (currentList_.empty()) currentList_ = lists_.front().id;
-}
+    : preRollUs_(preRollUs), postRollUs_(postRollUs) {}
 
 void EventStore::resetPoints(Event& e, const std::string& angle) {
   e.angles = {AngleCut{e.inUs, angle}};
@@ -34,7 +21,6 @@ void EventStore::resetPoints(Event& e, const std::string& angle) {
 }
 
 Event& EventStore::makeEvent(int64_t in, int64_t out, const std::string& angle) {
-  ensureList();
   Event e;
   e.id = nextId_++;
   e.listId = currentList_;
@@ -43,8 +29,12 @@ Event& EventStore::makeEvent(int64_t in, int64_t out, const std::string& angle) 
   e.outUs = out;
   resetPoints(e, angle);
   events_.push_back(std::move(e));
-  for (auto& l : lists_) {
-    if (l.id == currentList_) l.order.push_back(events_.back().id);
+  if (currentList_.empty()) {
+    rootOrder_.push_back(events_.back().id);
+  } else {
+    for (auto& l : lists_) {
+      if (l.id == currentList_) l.order.push_back(events_.back().id);
+    }
   }
   ++version_;
   return events_.back();
@@ -100,6 +90,7 @@ void EventStore::remove(int id) {
   events_.erase(std::remove_if(events_.begin(), events_.end(), [&](const Event& e) { return e.id == id; }),
                 events_.end());
   for (auto& l : lists_) l.order.erase(std::remove(l.order.begin(), l.order.end(), id), l.order.end());
+  rootOrder_.erase(std::remove(rootOrder_.begin(), rootOrder_.end(), id), rootOrder_.end());
   if (openId_ == id) openId_.reset();
   ++version_;
 }
@@ -141,17 +132,67 @@ void EventStore::recordZoom(int id, int64_t t, ZoomRect r) {
   ++version_;
 }
 
+const std::vector<int>& EventStore::orderOf(const std::string& listId) const {
+  static const std::vector<int> empty;
+  if (listId.empty()) return rootOrder_;
+  for (const auto& l : lists_) {
+    if (l.id == listId) return l.order;
+  }
+  return empty;
+}
+
+std::vector<int> EventStore::displayOrder() const {
+  std::vector<int> out = rootOrder_;
+  for (const auto& l : lists_) out.insert(out.end(), l.order.begin(), l.order.end());
+  return out;
+}
+
 std::string EventStore::newList(const std::string& name) {
   EventList l;
   l.id = "list-" + std::to_string(nextListId_++);
-  l.name = name;
+  const auto first = name.find_first_not_of(" \t\r\n");
+  const auto last = name.find_last_not_of(" \t\r\n");
+  l.name = first == std::string::npos ? "Game " + std::to_string(lists_.size() + 1)
+                                      : name.substr(first, last - first + 1);
   lists_.push_back(l);
   currentList_ = l.id;
   ++version_;
   return l.id;
 }
 
+bool EventStore::renameList(const std::string& id, const std::string& name) {
+  const auto first = name.find_first_not_of(" \t\r\n");
+  const auto last = name.find_last_not_of(" \t\r\n");
+  if (first == std::string::npos) return false;
+  for (auto& l : lists_) {
+    if (l.id == id) {
+      l.name = name.substr(first, last - first + 1);
+      ++version_;
+      return true;
+    }
+  }
+  return false;
+}
+
+void EventStore::deleteList(const std::string& id) {
+  auto it = std::find_if(lists_.begin(), lists_.end(), [&](const EventList& l) { return l.id == id; });
+  if (it == lists_.end()) return;
+  for (int eventId : it->order) {
+    if (Event* e = find(eventId)) e->listId.clear();
+    if (std::find(rootOrder_.begin(), rootOrder_.end(), eventId) == rootOrder_.end())
+      rootOrder_.push_back(eventId);
+  }
+  lists_.erase(it);
+  if (currentList_ == id) currentList_.clear();
+  ++version_;
+}
+
 void EventStore::selectList(const std::string& id) {
+  if (id.empty()) {
+    currentList_.clear();
+    ++version_;
+    return;
+  }
   for (const auto& l : lists_) {
     if (l.id == id) {
       currentList_ = id;
@@ -159,6 +200,47 @@ void EventStore::selectList(const std::string& id) {
       return;
     }
   }
+}
+
+void EventStore::moveEvents(const std::vector<int>& ids, const std::string& toList,
+                            std::optional<int> beforeId) {
+  std::vector<int>* target = toList.empty() ? &rootOrder_ : nullptr;
+  for (auto& l : lists_) {
+    if (l.id == toList) target = &l.order;
+  }
+  if (!target) return;
+
+  std::vector<int> moving;
+  for (int id : ids) {
+    if (!find(id) || std::find(moving.begin(), moving.end(), id) != moving.end()) continue;
+    moving.push_back(id);
+  }
+  if (moving.empty()) return;
+
+  const std::vector<int> original = *target;
+  auto isMoving = [&](int id) { return std::find(moving.begin(), moving.end(), id) != moving.end(); };
+  for (auto& l : lists_)
+    l.order.erase(std::remove_if(l.order.begin(), l.order.end(), isMoving), l.order.end());
+  rootOrder_.erase(std::remove_if(rootOrder_.begin(), rootOrder_.end(), isMoving), rootOrder_.end());
+
+  size_t index = target->size();
+  if (beforeId) {
+    const auto at = std::find(original.begin(), original.end(), *beforeId);
+    if (at != original.end()) {
+      if (!isMoving(*beforeId)) {
+        index = static_cast<size_t>(std::find(target->begin(), target->end(), *beforeId) - target->begin());
+      } else {
+        for (auto next = std::next(at); next != original.end(); ++next) {
+          if (isMoving(*next)) continue;
+          index = static_cast<size_t>(std::find(target->begin(), target->end(), *next) - target->begin());
+          break;
+        }
+      }
+    }
+  }
+  target->insert(target->begin() + static_cast<std::ptrdiff_t>(index), moving.begin(), moving.end());
+  for (int id : moving) find(id)->listId = toList;
+  ++version_;
 }
 
 void EventStore::reorder(const std::string& listId, std::vector<int> order) {
@@ -199,6 +281,7 @@ nlohmann::json EventStore::toJson() const {
   j["nextId"] = nextId_;
   j["nextListId"] = nextListId_;
   j["currentList"] = currentList_;
+  j["rootOrder"] = rootOrder_;
   j["preRollUs"] = preRollUs_;
   j["postRollUs"] = postRollUs_;
   j["defaultSpeed"] = defaultSpeed;
@@ -245,6 +328,7 @@ EventStore EventStore::fromJson(const nlohmann::json& j) {
     list.order = l.value("order", std::vector<int>{});
     s.lists_.push_back(std::move(list));
   }
+  s.rootOrder_ = j.value("rootOrder", std::vector<int>{});
   for (const auto& je : j.value("events", nlohmann::json::array())) {
     Event e;
     e.id = je.value("id", 0);
@@ -267,7 +351,37 @@ EventStore EventStore::fromJson(const nlohmann::json& j) {
     if (e.id >= s.nextId_) s.nextId_ = e.id + 1;
     s.events_.push_back(std::move(e));
   }
-  s.ensureList();
+
+  // An old show has no rootOrder: its lists stay intact. An event whose group vanished goes
+  // to the root, an event missing from its order is appended, and no id sits in two orders.
+  auto dedupe = [&](std::vector<int>& order) {
+    std::vector<int> out;
+    for (int id : order) {
+      if (!s.find(id) || std::find(out.begin(), out.end(), id) != out.end()) continue;
+      out.push_back(id);
+    }
+    order = std::move(out);
+  };
+  dedupe(s.rootOrder_);
+  for (auto& l : s.lists_) dedupe(l.order);
+  for (auto& e : s.events_) {
+    std::vector<int>* keep = &s.rootOrder_;
+    for (auto& l : s.lists_) {
+      if (l.id == e.listId) keep = &l.order;
+    }
+    if (keep == &s.rootOrder_ && !e.listId.empty()) e.listId.clear();
+    auto removeElsewhere = [&](std::vector<int>& order) {
+      if (&order == keep) return;
+      order.erase(std::remove(order.begin(), order.end(), e.id), order.end());
+    };
+    removeElsewhere(s.rootOrder_);
+    for (auto& l : s.lists_) removeElsewhere(l.order);
+    if (std::find(keep->begin(), keep->end(), e.id) == keep->end()) keep->push_back(e.id);
+  }
+  const auto known = [&](const std::string& id) {
+    return id.empty() || std::any_of(s.lists_.begin(), s.lists_.end(), [&](const EventList& l) { return l.id == id; });
+  };
+  if (!known(s.currentList_)) s.currentList_.clear();
   return s;
 }
 

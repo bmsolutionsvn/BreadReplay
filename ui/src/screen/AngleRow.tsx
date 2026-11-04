@@ -5,6 +5,7 @@ import type { Status } from '../api/types';
 import { useContextMenu } from '../ContextMenu';
 import { signalHint } from '../format';
 import { keyLabel } from '../hotkeys';
+import { cameraColor } from './cameraColors';
 import { NativeVideo } from './NativeVideo';
 
 type Props = {
@@ -19,6 +20,8 @@ export function AngleRow({ status, client, hotkeys = {}, native = false }: Props
   const menu = useContextMenu();
   const canvases = useRef<Array<HTMLCanvasElement | null>>([]);
   const preview = status?.players.preview;
+  const output = status?.players.output;
+  const onAir = !!output?.eventId;
 
   useEffect(() => {
     if (!client.onAngleRow) return;
@@ -45,12 +48,17 @@ export function AngleRow({ status, client, hotkeys = {}, native = false }: Props
     <section className="angles" aria-label="Angles">
       <h5 title="Every camera at the same moment as Preview. Click a camera to show it in Preview.">{`All cameras at ${preview?.tc ?? '--:--:--:--'}`}</h5>
       <div className="angle-row">
-        {(status?.inputs ?? []).map((input, i) => (
+        {(status?.inputs ?? []).map((input, i) => {
+          const target = preview?.angle === input.id;
+          const onPgm = onAir && output?.angle === input.id;
+          const key = i < 8 ? keyLabel(`player.angle${i + 1}`, hotkeys) : '';
+          return (
           <button
             key={input.id}
-            className={`angle ${preview?.angle === input.id ? 'sel' : ''}`}
+            className={`angle ${target ? 'target' : 'dim'}`}
+            style={target ? { boxShadow: `inset 0 0 0 3px ${cameraColor(i)}` } : undefined}
             aria-label={`Angle ${input.name}`}
-            title={`Show ${input.name} in Preview. Right-click for more.`}
+            title={`Show ${input.name} in Preview${key ? ` (${key})` : ''}. Right-click for more.`}
             onClick={() => client.send({ cmd: 'player.angle', player: 'preview', inputId: input.id })}
             onContextMenu={(e) =>
               menu(e, [
@@ -74,13 +82,21 @@ export function AngleRow({ status, client, hotkeys = {}, native = false }: Props
               native={native}
               fallback={<canvas ref={(el) => (canvases.current[i] = el)} aria-hidden="true" />}
             />
-            {i < 8 && <kbd className="slot">{keyLabel(`player.angle${i + 1}`, hotkeys)}</kbd>}
-            <b>{input.name}</b>
+            {target && <span className="aim" style={{ borderColor: cameraColor(i), color: cameraColor(i) }} />}
+            <span className="foot">
+              <span className="num" style={{ background: cameraColor(i) }}>{i + 1}</span>
+              <b>{input.name}</b>
+              <span className="tally">
+                {onPgm && <i className="pgm">PGM</i>}
+                {target && <i className="pvw">PVW</i>}
+              </span>
+            </span>
             <small className={`st ${input.state}`} title={signalHint(input.state)}>
               {input.state}
             </small>
           </button>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

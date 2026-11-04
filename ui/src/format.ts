@@ -18,6 +18,10 @@ export function formatClock(us: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+export function formatClockTenths(us: number): string {
+  return `${formatClock(us)}.${Math.floor(new Date(us / 1000).getMilliseconds() / 100)}`;
+}
+
 export function formatDuration(us: number): string {
   const s = Math.max(0, Math.round(us / 1_000_000));
   return `${Math.floor(s / 60)}:${pad(s % 60)}`;

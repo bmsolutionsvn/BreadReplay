@@ -156,6 +156,23 @@ TEST_CASE("OutputPlayer: highlight plays the list in order") {
   op.stop();
 }
 
+TEST_CASE("OutputPlayer: a selection plays in displayed order, whatever order it was sent") {
+  Fixture f;
+  const int a = f.events.lastN(kBase + 1 * kS, 1 * kS, "cam1").id;  // root
+  f.events.newList("");
+  const int c = f.events.lastN(kBase + 3 * kS, 1 * kS, "cam1").id;  // group
+  br::OutputPlayer op(*f.player, *f.src, *f.renderer, f.events, f.settings);
+  op.playEvents({c, a, 999});
+  CHECK(op.currentEvent() == a);
+}
+
+TEST_CASE("OutputPlayer: a selection of unknown ids plays nothing") {
+  Fixture f;
+  br::OutputPlayer op(*f.player, *f.src, *f.renderer, f.events, f.settings);
+  op.playEvents({999});
+  CHECK(op.idle());
+}
+
 TEST_CASE("OutputPlayer: a slow output never slows ticks") {
   Fixture f;
   f.settings.rate = bc::Rate{60, 1};

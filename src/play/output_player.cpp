@@ -23,22 +23,15 @@ void OutputPlayer::setOutputs(std::vector<std::unique_ptr<bc::Output>> outs) {
   for (auto& o : outs_) o->start();
 }
 
-void OutputPlayer::playHighlight(const std::string& listId) {
-  highlight_.clear();
-  std::string id = listId;
-  if (id.empty()) id = events_.currentList();
-  std::vector<int> order;
-  for (const auto& l : events_.lists()) {
-    if (l.id == id) order = l.order;
-  }
-  if (order.empty()) {
-    for (const auto& e : events_.events()) {
-      if (e.listId == id) order.push_back(e.id);
-    }
-  }
-  for (int eventId : order) {
-    if (events_.find(eventId)) highlight_.push_back(eventId);
-  }
+void OutputPlayer::playHighlight(const std::string& listId) { playEvents(events_.orderOf(listId)); }
+
+void OutputPlayer::playEvents(std::vector<int> ids) {
+  const auto display = events_.displayOrder();
+  ids.erase(std::remove_if(ids.begin(), ids.end(), [&](int id) { return !events_.find(id); }), ids.end());
+  std::stable_sort(ids.begin(), ids.end(), [&](int a, int b) {
+    return std::find(display.begin(), display.end(), a) < std::find(display.begin(), display.end(), b);
+  });
+  highlight_ = std::move(ids);
   if (highlight_.empty()) return;
   highlightIndex_ = 0;
   playingHighlight_ = true;

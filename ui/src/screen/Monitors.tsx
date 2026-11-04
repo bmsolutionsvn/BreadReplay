@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react';
 import type { Client, Command } from '../api/client';
 import type { EventStore, Status } from '../api/types';
 import { useContextMenu, type MenuItem } from '../ContextMenu';
-import { formatRemaining } from '../format';
+import { formatClockTenths, formatRemaining } from '../format';
 import { keyLabel } from '../hotkeys';
+import { cameraColor, cameraIndex, type MarkStamp } from './cameraColors';
 import { NativeVideo } from './NativeVideo';
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
   hotkeys?: Record<string, string>;
   lastN?: number;
   native?: boolean;
+  stamp?: MarkStamp | null;
+  onMark?: (c: Command) => void;
 };
 
 // Seconds the on-air event takes to play at its speed points (the lever's speed when it has none).
@@ -72,20 +75,23 @@ function MonitorCanvas({ client, id }: { client: Pick<Client, 'onPreview'>; id: 
   return <canvas ref={canvas} aria-hidden="true" />;
 }
 
-export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, lastN = 12, native = false }: Props) {
+export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, lastN = 12, native = false, stamp = null, onMark }: Props) {
   const menu = useContextMenu();
   const preview = status?.players.preview;
   const output = status?.players.output;
   const onAir = !!output?.eventId;
+  const pvwIndex = cameraIndex(status, preview?.angle);
+  const pgmIndex = cameraIndex(status, output?.angle);
   const onAirEvent = onAir ? events?.events.find((e) => e.id === output?.eventId) : undefined;
   const total = onAirEvent ? playSeconds(onAirEvent, output?.speed ?? 1) : 0;
   const progress = total > 0 && output?.remainingS != null ? Math.min(1, Math.max(0, 1 - output.remainingS / total)) : 0;
   const send = (c: Command) => void client?.send?.(c);
+  const mark = (c: Command) => (onMark ? onMark(c) : send(c));
 
   const previewMenu: MenuItem[] = [
-    { label: 'Mark replay start here', hint: keyLabel('mark.in', hotkeys), onSelect: () => send({ cmd: 'mark.in' }) },
-    { label: 'Mark replay end here', hint: keyLabel('mark.out', hotkeys), onSelect: () => send({ cmd: 'mark.out' }) },
-    { label: `Save the last ${lastN} seconds as a replay`, hint: keyLabel('mark.lastN', hotkeys), onSelect: () => send({ cmd: 'mark.lastN', n: lastN }) },
+    { label: 'Mark replay start here', hint: keyLabel('mark.in', hotkeys), onSelect: () => mark({ cmd: 'mark.in' }) },
+    { label: 'Mark replay end here', hint: keyLabel('mark.out', hotkeys), onSelect: () => mark({ cmd: 'mark.out' }) },
+    { label: `Save the last ${lastN} seconds as a replay`, hint: keyLabel('mark.lastN', hotkeys), onSelect: () => mark({ cmd: 'mark.lastN', n: lastN }) },
     'separator',
     { label: preview?.playing ? 'Pause' : 'Play', hint: keyLabel('player.play', hotkeys), onSelect: () => send({ cmd: preview?.playing ? 'player.pause' : 'player.play', player: 'preview' }) },
     { label: 'Back to live (what is happening now)', onSelect: () => send({ cmd: 'player.live', player: 'preview' }) },
@@ -108,12 +114,20 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
           <NativeVideo id="preview" native={native} fallback={<MonitorCanvas client={client} id="preview" />} />
         )}
         <span className="tag" title="Only you see Preview. Find the moment here, then press Play on air.">
-          PREVIEW · only you see this
+          PVW {pvwIndex >= 0 && <span className="cam">{pvwIndex + 1}</span>}
         </span>
+        {stamp && (
+          <span className="stamp" data-testid="mark-stamp">
+            {stamp.edge === 'in' ? 'IN' : 'OUT'}
+            <span className="num" style={{ background: cameraColor(cameraIndex(status, stamp.inputId)) }}>
+              {cameraIndex(status, stamp.inputId) + 1}
+            </span>
+            {formatClockTenths(stamp.tUs)}
+          </span>
+        )}
         <span className="tc">{preview?.tc ?? '--:--:--:--'}</span>
         <div className="ident">
           <b>{inputName(status, preview?.angle)}</b>
-          <small>{preview?.eventId ? `Replay ${preview.eventId} loaded` : 'Live now'}</small>
         </div>
       </div>
       <div
@@ -125,13 +139,13 @@ export function Monitors({ status, fps = 59.94, client, events, hotkeys = {}, la
           <NativeVideo id="output" native={native} fallback={<MonitorCanvas client={client} id="output" />} />
         )}
         <span className="tag" title="What viewers see. The director takes this feed. Called 'Program' or 'Output' elsewhere.">
-          {onAir ? 'ON AIR · viewers see this' : 'ON AIR · nothing playing'}
+          PGM {onAir && pgmIndex >= 0 && <span className="cam">{pgmIndex + 1}</span>}
         </span>
         <span className="tc">
           {onAir ? `${output?.tc} · ${Math.round((output?.speed ?? 1) * 100)}%` : '--:--:--:--'}
         </span>
         <div className="remain">
-          <small>{output?.eventId ? `Replay ${output.eventId} · ${inputName(status, output.angle)} · time left` : 'Nothing on air. Load a replay in Preview, then press Play on air.'}</small>
+          {onAir && <small>{inputName(status, output?.angle)}</small>}
           <div className="big" data-testid="remaining">
             {formatRemaining(output?.remainingS, fps)}
           </div>
