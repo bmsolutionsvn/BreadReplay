@@ -41,6 +41,9 @@ struct EngineDeps {
   std::function<int64_t()> clock;  // injectable for tests
 };
 
+// An SRT packet's AVColorSpace as the stored hint: only BT.709 and BT.601 are recognised.
+StoredColour srtColour(int colorSpace);
+
 // Owns the show, the per-input stores and recorders, both players, the outputs and the disk
 // monitor. The control API only reaches it through CommandRouter.
 class Engine {

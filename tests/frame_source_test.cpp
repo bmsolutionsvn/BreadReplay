@@ -420,6 +420,56 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
   CHECK(std::abs(avgPreview - avgKey) <= 12.0);
 }
 
+TEST_CASE("FrameSource: a recording that signals BT.709 is decoded as BT.709 at any size"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(30, 30, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 30);
+
+  const auto record = [&](bc::test::TempDir& dir, br::StoredColour colour) {
+    br::SegmentHeader header;
+    header.inputId = "cam1";
+    header.width = enc.w;
+    header.height = enc.h;
+    header.rate = bc::Rate{30, 1};
+    header.codec = br::StoredCodec::H264;
+    auto store = std::make_unique<br::InputStore>(dir.path, header);
+    br::Recorder rec(*store, br::VmxQuality::SQ, 512, 1);
+    for (size_t i = 0; i < enc.aus.size(); ++i) {
+      const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+      rec.pushCodedAu(ts, kBase + enc.pts[i] * 33333, br::StoredCodec::H264, enc.w, enc.h,
+                      enc.key[i], enc.aus[i], colour);
+    }
+    for (int i = 0; i < 400 && rec.stats().framesWritten < enc.aus.size(); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(rec.stats().framesWritten == enc.aus.size());
+    rec.stop();
+    return std::make_unique<br::InputStore>(dir.path, header);
+  };
+
+  bc::test::TempDir taggedDir;
+  auto tagged = record(taggedDir, br::StoredColour::Bt709);
+  br::FrameSource src({{"cam1", tagged.get()}}, gpu.get(), &pool, 1, 64);
+  const auto f = src.get("cam1", kBase);
+  REQUIRE(f);
+  REQUIRE(f->picture.tex);
+  CHECK(f->picture.bt709);
+
+  // 640x360, so the decoder's height rule leaves it BT.601 when nothing signals otherwise.
+  bc::test::TempDir plainDir;
+  auto plain = record(plainDir, br::StoredColour::Unknown);
+  br::FrameSource plainSrc({{"cam1", plain.get()}}, gpu.get(), &pool, 1, 64);
+  const auto g = plainSrc.get("cam1", kBase);
+  REQUIRE(g);
+  REQUIRE(g->picture.tex);
+  CHECK_FALSE(g->picture.bt709);
+}
+
 TEST_CASE("FrameSource: an open GOP at the live edge is remapped once it completes"
           BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);

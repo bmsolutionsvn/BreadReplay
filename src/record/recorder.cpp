@@ -63,7 +63,7 @@ void Recorder::pushCoded(int64_t tsUs, std::vector<uint8_t> vmx) {
 }
 
 void Recorder::pushCodedAu(int64_t tsUs, int64_t srcPtsUs, StoredCodec codec, uint32_t w, uint32_t h,
-                           bool keyframe, std::vector<uint8_t> au) {
+                           bool keyframe, std::vector<uint8_t> au, StoredColour colour) {
   std::unique_lock lock(m_);
   if (awaitKeyframe_) {
     if (!keyframe) {
@@ -84,6 +84,7 @@ void Recorder::pushCodedAu(int64_t tsUs, int64_t srcPtsUs, StoredCodec codec, ui
   j.srcPtsUs = srcPtsUs;
   j.codedAu = true;
   j.codec = codec;
+  j.colour = colour;
   j.keyframe = keyframe;
   j.w = w;
   j.h = h;
@@ -155,6 +156,7 @@ void Recorder::worker() {
     } else if (job.codedAu) {
       d.codedAu = true;
       d.codec = job.codec;
+      d.colour = job.colour;
       d.keyframe = job.keyframe;
       d.raw = std::move(job.video);
       d.frame.previewLen = 0;
@@ -208,9 +210,10 @@ void Recorder::writerLoop() {
     // Compare with the store's header, not the previous frame: an input whose first frame is not
     // the show size (a 720p observer in a 1080p show) must start a segment with its own size.
     const StoredCodec codec = d.codedAu ? d.codec : StoredCodec::Vmx;
+    const StoredColour colour = d.codedAu ? d.colour : StoredColour::Unknown;
     if (d.w && d.h && (d.w != store_.header().width || d.h != store_.header().height ||
-                       codec != store_.header().codec)) {
-      store_.changeVideoFormat(d.w, d.h, store_.header().rate, codec);
+                       codec != store_.header().codec || colour != store_.header().colour)) {
+      store_.changeVideoFormat(d.w, d.h, store_.header().rate, codec, colour);
     }
     if (d.codedAu) {
       store_.append(d.tsUs, d.raw, 0, d.audio, d.keyframe, d.srcPtsUs);

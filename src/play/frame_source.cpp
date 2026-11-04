@@ -182,6 +182,8 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   const Key want{id, ref.tsUs};
   const size_t count = store.frameCountIn(seg);
   const size_t gopEnd = std::min(count, store.nextKeyframeAfter(*k));
+  // The segment's own matrix, when it signalled one; Unknown keeps the decoder's height rule.
+  const StoredColour hint = store.colourOf(ref);
   // The last GOP of the segment being written can still gain AUs, so its display order is not final.
   const bool gopFinal = gopEnd < count || !store.isWriting(seg);
   if (gopFinal) {
@@ -239,6 +241,11 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       it->second.pop_front();
       return ts;
     };
+    const auto emitPicture = [&](bc::VideoFrameIn pic) {
+      if (hint != StoredColour::Unknown) pic.bt709 = hint == StoredColour::Bt709;
+      const int64_t slot = takeSlot(pic.ptsUs);
+      if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
+    };
 
     size_t i = start;
     for (; i < count; ++i) {
@@ -246,10 +253,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       if (!fr) break;
       const auto au = store.readVideo(*fr, false);
       if (au.empty()) break;
-      d.hx->decode(au, store.srcPtsOf(*fr), [&](bc::VideoFrameIn pic) {
-        const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
-      });
+      d.hx->decode(au, store.srcPtsOf(*fr), emitPicture);
       d.primed = true;
       d.seg = seg;
       d.fedIndex = i;
@@ -260,10 +264,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
     }
     if (i == count) {
       // The last pictures of the segment sit in the decoder until it is drained.
-      d.hx->flush([&](bc::VideoFrameIn pic) {
-        const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
-      });
+      d.hx->flush(emitPicture);
       d.primed = false;
     }
     return cache_.count(want) != 0;

@@ -40,6 +40,7 @@ class InputStore {
   // Index of the next keyframe after a frame in the same segment, or that segment's frame count.
   size_t nextKeyframeAfter(const FrameRef&) const;
   StoredCodec codecOf(const FrameRef&) const;
+  StoredColour colourOf(const FrameRef&) const;
   bool isKeyframe(const FrameRef&) const;
   size_t droppedBeforeKeyframe() const;
   bool isGapAt(int64_t tsUs) const;                  // no frame within 2 periods before tsUs
@@ -52,7 +53,8 @@ class InputStore {
   // A recorder's frame size changed: the open segment is closed, the next append starts a new
   // one with this header.
   void changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate,
-                         StoredCodec codec = StoredCodec::Vmx);
+                         StoredCodec codec = StoredCodec::Vmx,
+                         StoredColour colour = StoredColour::Unknown);
   std::vector<std::pair<int64_t, int64_t>> coverage() const;  // ranges split at gaps > 2 periods
   int64_t newestTs() const;
   int64_t bytesOnDisk() const;

@@ -191,6 +191,22 @@ TEST_CASE("InputStore: codec follows the segment header") {
   CHECK(store.codecOf(*second) == br::StoredCodec::Hevc);
 }
 
+TEST_CASE("InputStore: a colour change rolls the segment and colourOf follows it") {
+  bc::test::TempDir dir;
+  auto h = proto();
+  h.codec = br::StoredCodec::Hevc;
+  br::InputStore store(dir.path, h);
+  const int64_t base = noon();
+  store.append(base, video(0), 0, audio(0), true);
+  CHECK(store.colourOf(br::FrameRef{0, 0, base}) == br::StoredColour::Unknown);
+
+  store.changeVideoFormat(320, 180, bc::Rate{30, 1}, br::StoredCodec::Hevc, br::StoredColour::Bt709);
+  store.append(base + 1'000'000, video(1), 0, audio(1), true);
+  REQUIRE(store.segments().size() == 2);
+  CHECK(store.colourOf(br::FrameRef{0, 0, base}) == br::StoredColour::Unknown);
+  CHECK(store.colourOf(br::FrameRef{1, 0, base + 1'000'000}) == br::StoredColour::Bt709);
+}
+
 TEST_CASE("InputStore: a compressed segment rolls at a keyframe, not on the minute") {
   bc::test::TempDir dir;
   auto h = proto();

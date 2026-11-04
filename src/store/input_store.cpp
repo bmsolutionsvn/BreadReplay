@@ -208,7 +208,8 @@ bool InputStore::removeSegment(const std::filesystem::path& base) {
   return false;
 }
 
-void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate, StoredCodec codec) {
+void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate, StoredCodec codec,
+                                   StoredColour colour) {
   std::unique_lock lock(m_);
   if (!segs_.empty() && segs_.back().writer) {
     segs_.back().writer->close();
@@ -218,6 +219,7 @@ void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate, Stored
   proto_.height = h;
   proto_.rate = rate;
   proto_.codec = codec;
+  proto_.colour = colour;
   forceNewSegment_ = true;
   periodUs_ = rate.fps() > 0 ? static_cast<int64_t>(1'000'000.0 / rate.fps() + 0.5) : 33'333;
 }
@@ -266,6 +268,12 @@ StoredCodec InputStore::codecOf(const FrameRef& ref) const {
   std::shared_lock lock(m_);
   if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return StoredCodec::Vmx;
   return segs_[ref.segment].reader->header().codec;
+}
+
+StoredColour InputStore::colourOf(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return StoredColour::Unknown;
+  return segs_[ref.segment].reader->header().colour;
 }
 
 bool InputStore::isKeyframe(const FrameRef& ref) const {

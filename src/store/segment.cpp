@@ -83,7 +83,11 @@ void put64(std::vector<uint8_t>& out, int64_t v) {
 std::vector<uint8_t> headerBytes(const SegmentHeader& h) {
   std::vector<uint8_t> out;
   put32(out, h.version);
-  if (h.version >= 2) out.push_back(static_cast<uint8_t>(h.codec));
+  // v2-v3 wrote only the codec here and left the upper bits zero, so an older segment reads
+  // as Unknown without a version bump or a changed header size.
+  if (h.version >= 2) {
+    out.push_back(static_cast<uint8_t>(h.codec) | (static_cast<uint8_t>(h.colour) << 2));
+  }
   put32(out, static_cast<uint32_t>(h.inputId.size()));
   out.insert(out.end(), h.inputId.begin(), h.inputId.end());
   put32(out, h.width);
@@ -102,7 +106,10 @@ bool parseHeader(std::span<const uint8_t> b, SegmentHeader& h, int64_t& headerSi
   size_t pos = 4;
   if (h.version >= 2) {
     if (!need(pos, 1)) return false;
-    h.codec = static_cast<StoredCodec>(b[pos]);
+    const uint8_t codec = b[pos];
+    h.codec = static_cast<StoredCodec>(codec & 0x03);
+    const uint8_t colour = codec >> 2;
+    h.colour = colour <= 2 ? static_cast<StoredColour>(colour) : StoredColour::Unknown;
     ++pos;
   }
   if (!need(pos, 4)) return false;

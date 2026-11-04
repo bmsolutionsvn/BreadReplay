@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <libavutil/pixfmt.h>
+
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -308,6 +310,14 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
   CHECK(decoded <= 60);  // one GOP's worth per seek
 }
 #endif
+
+TEST_CASE("Engine: an SRT packet's colour space becomes the stored hint") {
+  CHECK(br::srtColour(AVCOL_SPC_BT709) == br::StoredColour::Bt709);
+  CHECK(br::srtColour(AVCOL_SPC_BT470BG) == br::StoredColour::Bt601);
+  CHECK(br::srtColour(AVCOL_SPC_SMPTE170M) == br::StoredColour::Bt601);
+  CHECK(br::srtColour(AVCOL_SPC_UNSPECIFIED) == br::StoredColour::Unknown);
+  CHECK(br::srtColour(AVCOL_SPC_BT2020_NCL) == br::StoredColour::Unknown);
+}
 
 TEST_CASE("Engine: statusJson reports nativeVideo") {
   Fixture f;
