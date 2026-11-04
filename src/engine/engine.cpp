@@ -248,10 +248,7 @@ void Engine::start() {
 
   buildInputs();
   rebuildFrameSource();
-
-  std::map<std::string, const InputStore*> exportStores;
-  for (const auto& [id, store] : stores_) exportStores[id] = store.get();
-  exportQueue_ = std::make_unique<ExportQueue>(std::move(exportStores), show_.settings);
+  rebuildExportQueue();
 
   previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, false, &cmdM_);
   outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true, &cmdM_);
@@ -279,10 +276,7 @@ void Engine::stop() {
   if (statusThread_.joinable()) statusThread_.join();
   recordStop();
   if (outputPlayer_) outputPlayer_->stop();
-  if (exportQueue_) {
-    exportQueue_->stop();
-    exportQueue_.reset();
-  }
+  stopExportQueue();
   previewEncoder_.reset();
   outputEncoder_.reset();
   outputPlayer_.reset();
@@ -358,6 +352,21 @@ void Engine::rebuildFrameSource() {
   std::map<std::string, const InputStore*> map;
   for (const auto& [id, store] : stores_) map[id] = store.get();
   source_ = std::make_unique<FrameSource>(std::move(map), deps_.gpu, deps_.pool);
+}
+
+// The queue holds pointers into stores_, so it stops before a store is replaced or destroyed.
+void Engine::stopExportQueue() {
+  if (!exportQueue_) return;
+  exportQueue_->stop();
+  exportQueue_.reset();
+}
+
+void Engine::rebuildExportQueue() {
+  stopExportQueue();
+  if (!started_) return;
+  std::map<std::string, const InputStore*> map;
+  for (const auto& [id, store] : stores_) map[id] = store.get();
+  exportQueue_ = std::make_unique<ExportQueue>(std::move(map), show_.settings);
 }
 
 void Engine::recordStart() {
@@ -442,6 +451,7 @@ void Engine::addInput(const ShowInput& in) {
   if (started_) {
     buildInputs();
     rebuildFrameSource();
+    rebuildExportQueue();
     if (recording_) recordStart();
   }
 }
@@ -452,6 +462,7 @@ void Engine::updateInput(const ShowInput& in) {
 }
 
 void Engine::removeInput(const std::string& id) {
+  stopExportQueue();  // before the store it reads goes away
   if (auto it = inputs_.find(id); it != inputs_.end() && it->second) it->second->stop();
   inputs_.erase(id);
   sinks_.erase(id);
@@ -461,7 +472,10 @@ void Engine::removeInput(const std::string& id) {
   show_.inputs.erase(std::remove_if(show_.inputs.begin(), show_.inputs.end(),
                                     [&](const ShowInput& i) { return i.id == id; }),
                      show_.inputs.end());
-  if (started_) rebuildFrameSource();
+  if (started_) {
+    rebuildFrameSource();
+    rebuildExportQueue();
+  }
 }
 
 void Engine::addOutput(const bc::OutputConfig& out) {
@@ -596,6 +610,9 @@ nlohmann::json Engine::statusJson() {
   j["exportCodecs"] = nlohmann::json::array();
   for (const auto codec : availableExportCodecs())
     j["exportCodecs"].push_back(codec == ExportCodec::H264 ? "h264" : "hevc");
+  j["exportCodec"] = show_.settings.exportCodec;
+  j["exportQuality"] = show_.settings.exportQuality;
+  j["exportMbps"] = show_.settings.exportMbps;
   j["nativeVideo"] = surfaces_ ? nlohmann::json(true)
                                : nlohmann::json(nativeReason_.empty() ? "native video is off" : nativeReason_);
   return j;

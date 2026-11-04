@@ -51,6 +51,16 @@ ExportQueue::~ExportQueue() { stop(); }
 
 int ExportQueue::add(ExportJob job) {
   std::lock_guard lock(m_);
+  // Two jobs queued in the same minute choose the same name before either writes its .part.
+  std::filesystem::path path = job.path;
+  for (int n = 2; reserved_.count(path) || std::filesystem::exists(path) ||
+                  std::filesystem::exists(path.string() + ".part");
+       ++n) {
+    path = job.path.parent_path() /
+           (job.path.stem().string() + " (" + std::to_string(n) + ").mp4");
+  }
+  reserved_.insert(path);
+  job.path = path;
   Entry entry;
   entry.state.id = nextId_++;
   entry.state.name = job.name;
@@ -162,6 +172,10 @@ void ExportQueue::runJob(const Entry& entry) {
       if (stopping_ || cancelId_.load() == id) {
         cancelled = true;
         break;
+      }
+      if (raw->error()) {
+        finishEntry(id, "failed", *raw->error(), 1.0);
+        return;
       }
       op.tickOnce();
       ++done;

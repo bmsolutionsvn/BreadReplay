@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -61,6 +62,7 @@ class ExportQueue {
   mutable std::mutex m_;
   std::condition_variable cv_;
   std::vector<Entry> entries_;
+  std::set<std::filesystem::path> reserved_;  // paths handed out but not yet on disk
   int nextId_ = 1;
   std::thread thread_;
   std::atomic<bool> stopping_{false};

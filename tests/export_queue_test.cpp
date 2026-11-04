@@ -270,6 +270,20 @@ TEST_CASE("Export: a replay with cuts, speed and a fade exports frame-accurate"
   CHECK(std::abs(got[late].r - reference[late].r) <= 16);
 }
 
+TEST_CASE("Export: two jobs with the same name never overwrite"
+          BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  Fixture f;
+  const int a = f.makeB();
+  const auto final = f.dir.path / "same.mp4";
+  br::ExportQueue q(f.stores, f.settings);
+  const int first = q.add(jobFor(f, {a}, final));
+  const int second = q.add(jobFor(f, {a}, final));
+  CHECK(waitFor(q, first, std::chrono::seconds(60)).state == "done");
+  CHECK(waitFor(q, second, std::chrono::seconds(60)).state == "done");
+  CHECK(std::filesystem::exists(final));
+  CHECK(std::filesystem::exists(f.dir.path / "same (2).mp4"));
+}
+
 TEST_CASE("Export: the output player keeps its pace while exporting"
           BC_REQUIRES(bc::test::Req::H264Encoder)) {
   Fixture f;

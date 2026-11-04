@@ -286,6 +286,15 @@ TEST_CASE("Router: status carries remainingS") {
   CHECK(st.at("inputs").at(0).at("id") == "cam1");
 }
 
+TEST_CASE("Router: status carries the saved export defaults") {
+  Fixture f;
+  f.engine->handle({{"cmd", "settings.set"}, {"exportCodec", "hevc"}, {"exportQuality", "small"}, {"exportMbps", 6}});
+  const auto st = f.engine->statusJson();
+  CHECK(st["exportCodec"] == "hevc");
+  CHECK(st["exportQuality"] == "small");
+  CHECK(st["exportMbps"] == doctest::Approx(6.0));
+}
+
 TEST_CASE("Router: export.start names a group export after the group"
           BC_REQUIRES(bc::test::Req::H264Encoder)) {
   Fixture f;

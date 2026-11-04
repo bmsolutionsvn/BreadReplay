@@ -68,6 +68,9 @@ export interface Status {
   nativeVideo?: true | string;
   exports?: ExportState[];
   exportCodecs?: ExportCodec[];
+  exportCodec?: ExportCodec;
+  exportQuality?: ExportQuality;
+  exportMbps?: number;
 }
 
 export interface AngleCut {

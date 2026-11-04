@@ -128,6 +128,8 @@ class Engine {
   void buildInputs();
   void buildOutputs();
   void rebuildFrameSource();
+  void stopExportQueue();
+  void rebuildExportQueue();
   void startPreviewThread();
   void previewLoop();
   void retentionLoop();

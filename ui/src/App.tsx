@@ -38,7 +38,12 @@ export function App({ client }: { client: Client }) {
   const [zoomMode, setZoomMode] = useState(false);
   const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
   const [exportWhat, setExportWhat] = useState<ExportTarget | null>(null);
-  const [exportLast, setExportLast] = useState<ExportChoice>({ codec: 'h264', quality: 'high', mbps: 10 });
+  const [exportLast, setExportLast] = useState<ExportChoice | null>(null);
+  const lastExport: ExportChoice = exportLast ?? {
+    codec: status?.exportCodec ?? 'h264',
+    quality: status?.exportQuality ?? 'high',
+    mbps: status?.exportMbps ?? 10,
+  };
   const hotkeys = status?.hotkeys ?? savedHotkeys;
 
   useEffect(() => () => clearTimeout(stampTimer.current), []);
@@ -220,7 +225,7 @@ export function App({ client }: { client: Client }) {
           client={client}
           what={exportWhat}
           codecs={status?.exportCodecs ?? ['h264']}
-          last={exportLast}
+          last={lastExport}
           onClose={() => setExportWhat(null)}
           onStarted={setExportLast}
         />
