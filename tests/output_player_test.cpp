@@ -9,29 +9,14 @@
 #include "io/omt_output.h"
 #include "play/output_player.h"
 #include "support/fake_output.h"
+#include "support/recording_output.h"
 #include "support/requires.h"
 #include "support/temp_dir.h"
 
 namespace {
+using br::test::RecordingOutput;
 constexpr int64_t kS = 1'000'000;
 constexpr int64_t kBase = 500'000'000;
-
-// Records every frame the tick hands it, synchronously: a test reads exactly this tick's frame.
-class RecordingOutput final : public bc::Output {
- public:
-  RecordingOutput(bool needsCpu, bool wantsGpu) : needsCpu_(needsCpu), wantsGpu_(wantsGpu) {}
-  bool needsCpu() const override { return needsCpu_; }
-  bool wantsGpuRgba8() const override { return wantsGpu_; }
-  void start() override {}
-  void submit(bc::OutFrame f) override { frames.push_back(std::move(f)); }
-  void stop() override {}
-  bc::OutputStatus status() const override { return {}; }
-
-  std::vector<bc::OutFrame> frames;
-
- private:
-  bool needsCpu_, wantsGpu_;
-};
 
 std::vector<std::unique_ptr<bc::Output>> oneOutput(std::unique_ptr<bc::Output> o) {
   std::vector<std::unique_ptr<bc::Output>> v;

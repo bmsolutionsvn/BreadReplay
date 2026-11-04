@@ -3,6 +3,22 @@
 #include "events/show_file.h"
 #include "support/temp_dir.h"
 
+TEST_CASE("ShowFile: export settings round-trip") {
+  bc::test::TempDir dir;
+  br::Show show;
+  show.settings.exportFolder = "D:/Exports";
+  show.settings.exportCodec = "hevc";
+  show.settings.exportQuality = "small";
+  show.settings.exportMbps = 6.5;
+  const auto path = dir.path / "show.json";
+  br::saveShow(path, show);
+  const br::Show back = br::loadShow(path);
+  CHECK(back.settings.exportFolder == "D:/Exports");
+  CHECK(back.settings.exportCodec == "hevc");
+  CHECK(back.settings.exportQuality == "small");
+  CHECK(back.settings.exportMbps == doctest::Approx(6.5));
+}
+
 TEST_CASE("ShowFile: save leaves no temp file and loads back equal") {
   bc::test::TempDir dir;
   br::Show show;

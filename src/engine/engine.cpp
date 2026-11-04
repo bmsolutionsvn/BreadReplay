@@ -16,6 +16,7 @@ extern "C" {
 #include "core/timecode.h"
 #include "engine/packet_convert.h"
 #include "engine/preview_encoder.h"
+#include "export/export_encoder.h"
 #include "io/remux.h"
 #include "engine/adapter_factory.h"
 #include "engine/command_router.h"
@@ -248,6 +249,10 @@ void Engine::start() {
   buildInputs();
   rebuildFrameSource();
 
+  std::map<std::string, const InputStore*> exportStores;
+  for (const auto& [id, store] : stores_) exportStores[id] = store.get();
+  exportQueue_ = std::make_unique<ExportQueue>(std::move(exportStores), show_.settings);
+
   previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, false, &cmdM_);
   outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true, &cmdM_);
   renderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, show_.settings.outW,
@@ -274,6 +279,10 @@ void Engine::stop() {
   if (statusThread_.joinable()) statusThread_.join();
   recordStop();
   if (outputPlayer_) outputPlayer_->stop();
+  if (exportQueue_) {
+    exportQueue_->stop();
+    exportQueue_.reset();
+  }
   previewEncoder_.reset();
   outputEncoder_.reset();
   outputPlayer_.reset();
@@ -418,6 +427,10 @@ void Engine::applySettings(const nlohmann::json& j) {
   if (j.contains("endAction")) s.endAction = j.value("endAction", s.endAction);
   if (j.contains("slatePath")) s.slatePath = j.value("slatePath", s.slatePath);
   if (j.contains("recordingFolder")) s.recordingFolder = j.value("recordingFolder", s.recordingFolder);
+  if (j.contains("exportFolder")) s.exportFolder = j.value("exportFolder", s.exportFolder);
+  if (j.contains("exportCodec")) s.exportCodec = j.value("exportCodec", s.exportCodec);
+  if (j.contains("exportQuality")) s.exportQuality = j.value("exportQuality", s.exportQuality);
+  if (j.contains("exportMbps")) s.exportMbps = j.value("exportMbps", s.exportMbps);
   if (j.contains("hotkeys")) s.hotkeys = j.value("hotkeys", std::map<std::string, std::string>{});
   show_.events.defaultSpeed = s.defaultSpeed;
   show_.events.setRoll(static_cast<int64_t>(s.preRollS * 1'000'000),
@@ -569,6 +582,20 @@ nlohmann::json Engine::statusJson() {
   j["events"] = {{"version", show_.events.version()}};
   j["edit"] = {{"canUndo", history_.canUndo() || router_.hasPendingPass(show_.events)},
                {"canRedo", history_.canRedo()}};
+  j["exports"] = nlohmann::json::array();
+  if (exportQueue_) {
+    for (const auto& e : exportQueue_->states()) {
+      j["exports"].push_back({{"id", e.id},
+                              {"name", e.name},
+                              {"state", e.state},
+                              {"progress", e.progress},
+                              {"error", e.error},
+                              {"path", e.path}});
+    }
+  }
+  j["exportCodecs"] = nlohmann::json::array();
+  for (const auto codec : availableExportCodecs())
+    j["exportCodecs"].push_back(codec == ExportCodec::H264 ? "h264" : "hevc");
   j["nativeVideo"] = surfaces_ ? nlohmann::json(true)
                                : nlohmann::json(nativeReason_.empty() ? "native video is off" : nativeReason_);
   return j;

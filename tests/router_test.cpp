@@ -11,6 +11,7 @@
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
 #include "io/ffmpeg_input.h"
+#include "support/requires.h"
 #include "support/temp_dir.h"
 #include "support/test_media.h"
 
@@ -283,4 +284,41 @@ TEST_CASE("Router: status carries remainingS") {
   REQUIRE(rem.is_number());
   CHECK(rem.get<double>() == doctest::Approx(20.0).epsilon(0.05));  // 10 s at the default 50 %
   CHECK(st.at("inputs").at(0).at("id") == "cam1");
+}
+
+TEST_CASE("Router: export.start names a group export after the group"
+          BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  CHECK(r.handle({{"cmd", "export.start"}})["ok"] == false);
+  const int a = r.handle({{"cmd", "mark.lastN"}, {"n", 1}})["id"];
+  const std::string g = r.handle({{"cmd", "list.new"}, {"name", "Game 1"}})["id"];
+  r.handle({{"cmd", "event.move"}, {"ids", {a}}, {"listId", g}});
+  const auto res = r.handle({{"cmd", "export.start"}, {"listId", g}});
+  REQUIRE(res["ok"] == true);
+  const auto st = f.engine->statusJson();
+  REQUIRE(st["exports"].size() == 1);
+  CHECK(st["exports"][0]["name"] == "Game 1");
+  CHECK(st["exports"][0]["path"].get<std::string>().ends_with(".mp4"));
+}
+
+TEST_CASE("Router: later edits do not change a queued export"
+          BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int a = r.handle({{"cmd", "mark.lastN"}, {"n", 1}})["id"];
+  const auto res = r.handle({{"cmd", "export.start"}, {"id", a}});
+  REQUIRE(res["ok"] == true);
+  const int id = res["id"];
+  r.handle({{"cmd", "event.delete"}, {"id", a}});
+  std::string state;
+  for (int i = 0; i < 3000; ++i) {
+    const auto st = f.engine->statusJson();
+    for (const auto& e : st["exports"]) {
+      if (e["id"] == id) state = e["state"];
+    }
+    if (state == "done" || state == "failed" || state == "cancelled") break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  CHECK(state == "done");
 }
