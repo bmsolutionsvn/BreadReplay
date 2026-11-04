@@ -179,6 +179,15 @@ test('Timeline: wheel pans by a tenth and Ctrl+wheel zooms at the pointer', () =
   expect((from + to) / 2).toBe(5_000_000);
 });
 
+test('Timeline: intervals are clipped to the view after a pan', () => {
+  const { section } = renderTimeline();
+  fireEvent.wheel(section, { deltaY: 100 });
+  const block = screen.getByTestId('block-0');
+  expect(block.style.left).toBe('0%');
+  expect(block.style.width).toBe('30%');
+  expect(screen.getByTestId('handle-in').parentElement).toHaveStyle({ left: '0%' });
+});
+
 test('Timeline: playheads take the tally colours', () => {
   renderTimeline({ status: status(3_000_000, 2_000_000, true) });
   expect(screen.getByTestId('ph-pvw')).toHaveClass('pvw');

@@ -176,7 +176,7 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .tl-labels { display: grid; gap: 4px; }
 .tl-lanes { position: relative; display: grid; gap: 4px; }
 .tl .cams-lab { display: flex; align-items: center; gap: 4px; height: 16px; }
-.tl .num { display: inline-grid; place-items: center; min-width: 16px; height: 16px; border-radius: 3px; font: 700 10px var(--mono); color: #0b0e12; }
+.tl .num { display: inline-grid; place-items: center; min-width: 16px; height: 16px; border-radius: 3px; font: 700 11px var(--mono); color: #0b0e12; }
 .tl .lane { height: 16px; }
 .tl .lane-hit { position: absolute; inset: 0; }
 .tl .inout { pointer-events: none; }

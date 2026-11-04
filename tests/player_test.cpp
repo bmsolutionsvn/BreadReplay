@@ -1,7 +1,11 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <mutex>
+#include <thread>
 
 #include "play/player.h"
 
@@ -227,6 +231,32 @@ TEST_CASE("Player: riding on Output records into the store and the picture") {
   CHECK(p.tick().inputId == "cam2");
   const auto& angles = store.find(1)->angles;
   CHECK(std::any_of(angles.begin(), angles.end(), [](const br::AngleCut& a) { return a.inputId == "cam2"; }));
+}
+
+TEST_CASE("Player: pass writes take the store lock") {
+  auto store = passStore();
+  std::recursive_mutex lock;
+  br::Player p(store, kTen, true, false, &lock);
+  p.cue(1);
+  p.play();
+  std::atomic<bool> held{false};
+  std::atomic<bool> done{false};
+  std::thread holder([&] {
+    std::unique_lock held_(lock);
+    held = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  });
+  while (!held) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  std::thread ticker([&] {
+    p.tick();
+    done = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const bool blocked = !done;
+  holder.join();
+  ticker.join();
+  CHECK(blocked);
+  CHECK(done);
 }
 
 TEST_CASE("Player: a 30 fps angle in a 60 fps show repeats frames") {

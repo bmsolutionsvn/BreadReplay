@@ -129,8 +129,9 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey]);
 
-  const pct = (tUs: number) => `${((tUs - view.fromUs) / span(view)) * 100}%`;
-  const widthPct = (a: number, b: number) => `${((Math.min(b, view.toUs) - Math.max(a, view.fromUs)) / span(view)) * 100}%`;
+  const pct = (tUs: number) => `${((clamp(tUs, view.fromUs, view.toUs) - view.fromUs) / span(view)) * 100}%`;
+  const widthPct = (a: number, b: number) =>
+    `${(Math.max(0, Math.min(b, view.toUs) - Math.max(a, view.fromUs)) / span(view)) * 100}%`;
   const inView = (tUs: number | null | undefined): tUs is number => tUs != null && tUs >= view.fromUs && tUs <= view.toUs;
   const previewStatus = status?.players.preview;
   const playhead = previewStatus?.posUs;

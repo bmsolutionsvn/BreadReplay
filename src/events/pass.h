@@ -39,12 +39,18 @@ std::vector<P> finishPass(const std::vector<P>& base, const std::vector<P>& pass
   for (const auto& b : base) {
     if (b.tUs <= toUs) at = &b;
   }
-  if (at && !sameValue(out.back(), *at)) {
-    P p = *at;
-    p.tUs = toUs;
-    out.push_back(p);
-    std::sort(out.begin(), out.end(), [](const P& a, const P& b) { return a.tUs < b.tUs; });
+  if (!at) return out;
+  const P* inEffect = nullptr;
+  for (const auto& p : out) {
+    if (p.tUs <= toUs) inEffect = &p;
   }
+  if (inEffect && sameValue(*inEffect, *at)) return out;
+  // The stop frame may already carry the pass's last point: replace it, never tie.
+  out.erase(std::remove_if(out.begin(), out.end(), [&](const P& p) { return p.tUs == toUs; }), out.end());
+  P p = *at;
+  p.tUs = toUs;
+  out.push_back(p);
+  std::sort(out.begin(), out.end(), [](const P& a, const P& b) { return a.tUs < b.tUs; });
   return out;
 }
 

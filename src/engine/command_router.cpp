@@ -65,30 +65,58 @@ bool CommandRouter::isEdit(const std::string& name, const nlohmann::json& cmd) c
   return false;
 }
 
-bool CommandRouter::isPassSettling(const std::string& name) const {
-  return name == "mark.in" || name == "mark.out" || name == "mark.lastN" ||
-         name == "event.update" || name == "event.trim" || name == "event.delete" ||
-         name == "event.clearCuts" || name == "event.move" || name == "list.new" ||
-         name == "list.rename" || name == "list.delete" || name == "list.reorder" ||
-         name == "edit.undo" || name == "edit.redo" || name == "player.cue" ||
-         name == "player.cueAt" || name == "player.live" || name == "player.pause" ||
-         name == "player.play" || name == "take" || name == "show.new" || name == "show.open";
+bool CommandRouter::isRide(const std::string& name, const nlohmann::json&, const std::string& who) const {
+  if (name == "take" || name == "highlight.play" || name == "player.play") return true;
+  if (name == "player.angle" || name == "player.lever" || name == "player.preset" ||
+      name == "player.zoom") {
+    return engine_.playerFor(who).state().playing;
+  }
+  return false;
 }
 
 void CommandRouter::settlePass() {
   if (!passBefore_) return;
+  if (!passOwner_.empty()) engine_.playerFor(passOwner_).endRide();
   if (engine_.events().version() != passBefore_->version()) engine_.history().record(*passBefore_);
   passBefore_.reset();
+  passOwner_.clear();
+}
+
+bool CommandRouter::hasPendingPass(const EventStore& store) const {
+  return passBefore_ && store.version() != passBefore_->version();
 }
 
 nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
   try {
     const std::string name = cmd.value("cmd", std::string{});
-    if (isPassSettling(name)) settlePass();
+    const std::string who = cmd.value("player", std::string("preview"));
+    const bool edit = isEdit(name, cmd);
+    // Anything that touches the store ends the ride first, so the pass is its own step.
+    if (edit || name == "edit.undo" || name == "edit.redo" || name == "show.new" ||
+        name == "show.open" || name == "take" || name == "highlight.play") {
+      settlePass();
+    } else if ((name == "player.cue" || name == "player.cueAt" || name == "player.live" ||
+                name == "player.pause") &&
+               passBefore_ && passOwner_ == who) {
+      settlePass();
+    }
+    if (name == "player.play" && passBefore_) settlePass();
+
+    const std::string owner = (name == "take" || name == "highlight.play") ? "output" : who;
+    const bool ride = isRide(name, cmd, who);
+    std::optional<EventStore> rideBefore;
+    if (ride) {
+      if (passBefore_ && passOwner_ != owner) settlePass();
+      if (!passBefore_) {
+        rideBefore = engine_.events();
+        passOwner_ = owner;
+      }
+    }
+
     std::optional<EventStore> before;
-    if (isEdit(name, cmd)) before = engine_.events();
+    if (edit) before = engine_.events();
     auto reply = handleImpl(cmd);
-    if ((name == "player.play" || name == "take") && !passBefore_) passBefore_ = engine_.events();
+    if (rideBefore) passBefore_ = *rideBefore;
     if (before && engine_.events().version() != before->version()) engine_.history().record(*before);
     return reply;
   } catch (const std::exception& e) {

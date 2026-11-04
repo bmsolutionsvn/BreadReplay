@@ -22,3 +22,16 @@ TEST_CASE("Pass: finish restores the base value where the pass stopped") {
   CHECK(out[2].inputId == "cam3");
   CHECK(out[3].inputId == "cam4");
 }
+
+TEST_CASE("Pass: finish leaves one point on the frame the pass stopped") {
+  std::vector<br::AngleCut> base{{0, "cam1"}};
+  const auto out = br::finishPass(base, {{3 * kS, "cam2"}}, 3 * kS, 3 * kS, 10 * kS);
+  int atStop = 0;
+  for (const auto& p : out) {
+    if (p.tUs == 3 * kS) {
+      ++atStop;
+      CHECK(p.inputId == "cam1");
+    }
+  }
+  CHECK(atStop == 1);
+}

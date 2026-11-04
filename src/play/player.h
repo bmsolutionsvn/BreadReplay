@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -31,7 +32,8 @@ struct TickResult {
 
 class Player {
  public:
-  Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze = false);
+  Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze = false,
+         std::recursive_mutex* storeLock = nullptr);
   void cue(int eventId);
   void cueCopy(const Event& e);
   void cueAt(int64_t t, const std::string& angle);
@@ -48,6 +50,7 @@ class Player {
   double remainingSeconds() const;  // to Out; +inf at speed 0
   const PlayerState& state() const { return state_; }
   void restore(const PlayerState&);
+  void endRide();  // finish a live-riding pass without changing play state
   // The event this player reads: a copy when frozen or cued from one, else the store.
   const Event* event() const;
 
@@ -69,6 +72,7 @@ class Player {
   };
 
   double currentSpeed(const Event* e) const;
+  std::unique_lock<std::recursive_mutex> lockStore() const;
   void beginPass();
   void endPass();
   void commitPass(bool finish, int64_t toUs);
@@ -80,6 +84,7 @@ class Player {
   int64_t periodUs_ = 0;
   bool recordCuts_ = true;
   bool freeze_ = false;
+  std::recursive_mutex* lock_ = nullptr;
   PlayerState state_;
   bool ended_ = false;
   std::optional<Event> frozen_;

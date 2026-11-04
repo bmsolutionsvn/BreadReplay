@@ -182,6 +182,73 @@ TEST_CASE("Router: one pass is one undo step, even when it ends by itself") {
   CHECK(f.engine->events().events().empty());
 }
 
+TEST_CASE("Router: an edit after a pass settles the pass first") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  r.handle({{"cmd", "player.cue"}, {"eventId", id}});
+  const auto marked = *f.engine->events().find(id);
+  r.handle({{"cmd", "player.play"}});
+  r.handle({{"cmd", "player.preset"}, {"speed", 0.75}});
+  auto& p = f.engine->playerFor("preview");
+  for (int i = 0; i < 10000 && p.state().playing; ++i) p.tick();
+  const auto afterPass = *f.engine->events().find(id);
+  r.handle({{"cmd", "player.preset"}, {"speed", 0.5}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  const auto& afterUndo = *f.engine->events().find(id);
+  REQUIRE(afterUndo.speeds.size() == afterPass.speeds.size());
+  for (size_t i = 0; i < afterPass.speeds.size(); ++i) {
+    CHECK(afterUndo.speeds[i].tUs == afterPass.speeds[i].tUs);
+    CHECK(afterUndo.speeds[i].speed == doctest::Approx(afterPass.speeds[i].speed));
+  }
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  const auto& afterSecond = *f.engine->events().find(id);
+  REQUIRE(afterSecond.speeds.size() == marked.speeds.size());
+  for (size_t i = 0; i < marked.speeds.size(); ++i)
+    CHECK(afterSecond.speeds[i].speed == doctest::Approx(marked.speeds[i].speed));
+}
+
+TEST_CASE("Router: undo during a pass stops the pass") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  r.handle({{"cmd", "player.cue"}, {"eventId", id}});
+  const auto marked = *f.engine->events().find(id);
+  r.handle({{"cmd", "player.play"}});
+  r.handle({{"cmd", "player.preset"}, {"speed", 0.75}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  f.engine->playerFor("preview").tick();
+  const auto& after = *f.engine->events().find(id);
+  REQUIRE(after.speeds.size() == marked.speeds.size());
+  for (size_t i = 0; i < marked.speeds.size(); ++i)
+    CHECK(after.speeds[i].speed == doctest::Approx(marked.speeds[i].speed));
+}
+
+TEST_CASE("Router: status says Undo is available while a pass is being ridden") {
+  Fixture f;
+  const int id = f.engine->handle({{"cmd", "mark.lastN"}, {"n", 2}})["id"];
+  f.engine->history().clear();  // as if the show had just been opened
+  f.engine->handle({{"cmd", "player.cue"}, {"eventId", id}});
+  f.engine->handle({{"cmd", "player.play"}});
+  f.engine->handle({{"cmd", "player.preset"}, {"speed", 0.5}});
+  CHECK(f.engine->statusJson()["edit"]["canUndo"] == true);
+}
+
+TEST_CASE("Router: riding a highlight is an undo step") {
+  Fixture f;
+  br::CommandRouter r(*f.engine);
+  const int id = r.handle({{"cmd", "mark.lastN"}, {"n", 10}})["id"];
+  r.handle({{"cmd", "highlight.play"}, {"ids", {id}}});
+  const auto beforeRide = *f.engine->events().find(id);
+  r.handle({{"cmd", "player.preset"}, {"player", "output"}, {"speed", 0.25}});
+  CHECK(r.handle({{"cmd", "edit.undo"}})["done"] == true);
+  const br::Event* after = f.engine->events().find(id);
+  REQUIRE(after != nullptr);
+  REQUIRE(after->speeds.size() == beforeRide.speeds.size());
+  for (size_t i = 0; i < beforeRide.speeds.size(); ++i)
+    CHECK(after->speeds[i].speed == doctest::Approx(beforeRide.speeds[i].speed));
+}
+
 TEST_CASE("Router: undo while Output plays does not change the picture") {
   Fixture f;
   br::CommandRouter r(*f.engine);

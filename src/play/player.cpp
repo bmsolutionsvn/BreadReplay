@@ -25,9 +25,15 @@ std::pair<int64_t, int64_t> passRange(const Pass& pass, int64_t toUs) {
 }
 }  // namespace
 
-Player::Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze)
-    : events_(events), recordCuts_(recordCuts), freeze_(freeze) {
+Player::Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze,
+               std::recursive_mutex* storeLock)
+    : events_(events), recordCuts_(recordCuts), freeze_(freeze), lock_(storeLock) {
   periodUs_ = static_cast<int64_t>(1'000'000.0 / showRate.fps() + 0.5);
+}
+
+std::unique_lock<std::recursive_mutex> Player::lockStore() const {
+  if (lock_) return std::unique_lock<std::recursive_mutex>(*lock_);
+  return {};
 }
 
 const Event* Player::event() const {
@@ -36,6 +42,7 @@ const Event* Player::event() const {
 }
 
 void Player::cue(int eventId) {
+  auto held = lockStore();
   const Event* e = events_.find(eventId);
   if (!e) return;
   endPass();
@@ -56,6 +63,7 @@ void Player::cue(int eventId) {
 }
 
 void Player::cueCopy(const Event& e) {
+  auto held = lockStore();
   endPass();
   frozen_ = e;
   state_.eventId = e.id;
@@ -70,6 +78,7 @@ void Player::cueCopy(const Event& e) {
 }
 
 void Player::cueAt(int64_t t, const std::string& angle) {
+  auto held = lockStore();
   endPass();
   frozen_.reset();
   state_.eventId.reset();
@@ -186,6 +195,7 @@ void Player::recordZoomPass(ZoomRect r) {
 }
 
 void Player::play() {
+  auto held = lockStore();
   state_.playing = true;
   ended_ = false;
   angleManual_ = false;
@@ -194,16 +204,19 @@ void Player::play() {
 }
 
 void Player::pause() {
+  auto held = lockStore();
   endPass();
   state_.playing = false;
 }
 
 void Player::setDirection(int dir) {
+  auto held = lockStore();
   endPass();
   state_.dir = dir < 0 ? -1 : +1;
 }
 
 void Player::step(int frames) {
+  auto held = lockStore();
   endPass();
   state_.playing = false;
   ended_ = false;
@@ -213,7 +226,13 @@ void Player::step(int frames) {
   }
 }
 
+void Player::endRide() {
+  auto held = lockStore();
+  endPass();
+}
+
 void Player::setLever(double s) {
+  auto held = lockStore();
   if (state_.leverLocked) return;
   state_.lever = s;
   state_.overriding = true;
@@ -226,6 +245,7 @@ void Player::setLever(double s) {
 }
 
 void Player::setSpeedPreset(double s) {
+  auto held = lockStore();
   state_.lever = s;
   state_.overriding = true;
   if (!recordCuts_ || !state_.eventId) return;
@@ -239,6 +259,7 @@ void Player::setSpeedPreset(double s) {
 void Player::lockLever(bool locked) { state_.leverLocked = locked; }
 
 void Player::setAngle(const std::string& id) {
+  auto held = lockStore();
   state_.angle = id;
   if (!recordCuts_ || !state_.eventId) {
     angleManual_ = true;
@@ -252,6 +273,7 @@ void Player::setAngle(const std::string& id) {
 }
 
 void Player::setZoom(ZoomRect r) {
+  auto held = lockStore();
   state_.zoom = r;
   if (!recordCuts_ || !state_.eventId) {
     zoomManual_ = true;
@@ -270,6 +292,7 @@ double Player::currentSpeed(const Event* e) const {
 }
 
 TickResult Player::tick() {
+  auto held = lockStore();
   TickResult r;
   const Event* e = event();
   if (e) {
@@ -308,6 +331,7 @@ TickResult Player::tick() {
 }
 
 double Player::remainingSeconds() const {
+  auto held = lockStore();
   const Event* e = event();
   if (!e) return std::numeric_limits<double>::infinity();
   if (state_.posUs >= e->outUs) return 0.0;
@@ -338,6 +362,7 @@ double Player::remainingSeconds() const {
 }
 
 void Player::restore(const PlayerState& s) {
+  auto held = lockStore();
   endPass();
   state_ = s;
   angleManual_ = false;

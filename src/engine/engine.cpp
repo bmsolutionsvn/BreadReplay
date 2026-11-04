@@ -159,8 +159,8 @@ Engine::Engine(EngineDeps deps, Show show, std::filesystem::path folder)
   showJson_ = folder_ / "show.json";
   show_.events.setRoll(static_cast<int64_t>(show_.settings.preRollS * 1'000'000),
                        static_cast<int64_t>(show_.settings.postRollS * 1'000'000));
-  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
-  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true);
+  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, false, &cmdM_);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true, &cmdM_);
   rebuildFrameSource();
 }
 
@@ -248,8 +248,8 @@ void Engine::start() {
   buildInputs();
   rebuildFrameSource();
 
-  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true);
-  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true);
+  previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, false, &cmdM_);
+  outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true, &cmdM_);
   renderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, show_.settings.outW,
                                          show_.settings.outH);
   previewRenderer_ = std::make_unique<Renderer>(*deps_.gpu, *deps_.pool, *deps_.conv, kPreviewWidth,
@@ -505,6 +505,7 @@ void Engine::setNativeVideoReason(std::string reason) {
 
 nlohmann::json Engine::statusJson() {
   std::lock_guard lock(m_);
+  std::lock_guard cmdLock(cmdM_);
   nlohmann::json j;
   j["type"] = "status";
   j["recording"] = recording_;
@@ -566,7 +567,8 @@ nlohmann::json Engine::statusJson() {
   }
   j["players"] = players;
   j["events"] = {{"version", show_.events.version()}};
-  j["edit"] = {{"canUndo", history_.canUndo()}, {"canRedo", history_.canRedo()}};
+  j["edit"] = {{"canUndo", history_.canUndo() || router_.hasPendingPass(show_.events)},
+               {"canRedo", history_.canRedo()}};
   j["nativeVideo"] = surfaces_ ? nlohmann::json(true)
                                : nlohmann::json(nativeReason_.empty() ? "native video is off" : nativeReason_);
   return j;
