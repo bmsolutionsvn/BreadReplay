@@ -222,6 +222,9 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       if (!key) return keyIndex + 1;
       const size_t end = std::min(count, store.nextKeyframeAfter(*key));
       const bool final = end < count || !store.isWriting(seg);
+      // A GOP tabled while still open: its pictures may be in decode order, so remember it and
+      // let the provisional drop re-feed it once it closes, even if no get() landed in it meanwhile.
+      if (!final) provisional_.insert(std::make_tuple(id, seg, keyIndex));
       std::vector<std::pair<int64_t, size_t>> order;  // (source pts, decode index)
       order.reserve(end > keyIndex ? end - keyIndex : 0);
       for (size_t j = keyIndex; j < end; ++j) {
@@ -337,6 +340,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   if (!gpu_ || !pool_ || !conv_) return nullptr;
   const auto key = store.keyframeAtOrBefore(*ref);
   if (!key || key->segment != ref->segment) return nullptr;
+  const StoredColour hint = store.colourOf(*key);
   auto& d = decoders_[{inputId, 2}];
   const StoredCodec codec = store.codecOf(*key);
   if (!d.preview || d.previewCodec != codec || d.pw != w || d.ph != h) {
@@ -354,6 +358,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   std::shared_ptr<const PreviewImage> image;
   const auto build = [&](bc::VideoFrameIn pic) {
     if (image || !pic.tex) return;
+    if (hint != StoredColour::Unknown) pic.bt709 = hint == StoredColour::Bt709;
     const Size ps = VmxDecoder::previewSize(w, h);
     auto linear = conv_->toLinear(*pic.tex, pic.layout, pic.fullRange, pic.bt709);
     auto fitted = conv_->fit(*linear, ps.w, ps.h);

@@ -269,6 +269,13 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
       },
       30000));
   const int64_t first = engine.store("cam0")->segments().front().firstTs;
+  {
+    const auto* s = engine.store("cam0");
+    REQUIRE(s);
+    const auto ref = s->find(first);
+    REQUIRE(ref.has_value());
+    CHECK(s->colourOf(*ref) == br::StoredColour::Bt709);  // the OMT-HX tap's hint
+  }
   const int64_t cueT = first + 1'500'000;
 
   // Park Preview away from the live edge so it does not decode while Output reverses.

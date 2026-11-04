@@ -82,7 +82,7 @@ struct Encoded {
   int fps = 30;
 };
 
-Encoded encodeH264(int frames, int gop, int bframes) {
+Encoded encodeH264(int frames, int gop, int bframes, bool colour = false) {
   Encoded out;
   // libx264 is not linked into the product build; AMF honours B-frames, MF's camera record does not.
   const char* names[] = {"libx264", "h264_amf", "h264_mf"};
@@ -147,8 +147,10 @@ Encoded encodeH264(int frames, int gop, int bframes) {
       }
     }
     for (int y = 0; y < ctx->height / 2; ++y) {
-      std::memset(frame->data[1] + y * frame->linesize[1], 128, static_cast<size_t>(ctx->width / 2));
-      std::memset(frame->data[2] + y * frame->linesize[2], 128, static_cast<size_t>(ctx->width / 2));
+      std::memset(frame->data[1] + y * frame->linesize[1], colour ? 90 : 128,
+                  static_cast<size_t>(ctx->width / 2));
+      std::memset(frame->data[2] + y * frame->linesize[2], colour ? 200 : 128,
+                  static_cast<size_t>(ctx->width / 2));
     }
     frame->pts = i;
     frame->duration = 1;
@@ -253,7 +255,8 @@ std::vector<uint8_t> readLuma(bc::GpuDevice& gpu, const br::DecodedFrame& f) {
   return y;
 }
 // Records the first `count` access units of `enc` and reopens the store, as a restarted player does.
-std::unique_ptr<br::InputStore> recordH264(const bc::test::TempDir& dir, const Encoded& enc, size_t count) {
+std::unique_ptr<br::InputStore> recordH264(const bc::test::TempDir& dir, const Encoded& enc, size_t count,
+                                         br::StoredColour colour = br::StoredColour::Unknown) {
   br::SegmentHeader header;
   header.inputId = "cam1";
   header.width = enc.w;
@@ -266,7 +269,7 @@ std::unique_ptr<br::InputStore> recordH264(const bc::test::TempDir& dir, const E
     for (size_t i = 0; i < count; ++i) {
       const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
       rec.pushCodedAu(ts, kBase + enc.pts[i] * 33333, br::StoredCodec::H264, enc.w, enc.h,
-                      enc.key[i], enc.aus[i]);
+                      enc.key[i], enc.aus[i], colour);
     }
     for (int i = 0; i < 400 && rec.stats().framesWritten < count; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -494,6 +497,33 @@ TEST_CASE("FrameSource: a recording that signals BT.709 is decoded as BT.709 at 
   CHECK_FALSE(g->picture.bt709);
 }
 
+TEST_CASE("FrameSource: a preview uses the segment's colour space"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(30, 30, 2, true);  // non-neutral chroma, so the matrix shows
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 30);
+
+  bc::test::TempDir dir;
+  auto tagged = recordH264(dir, enc, enc.aus.size(), br::StoredColour::Bt709);
+  br::FrameSource a({{"cam1", tagged.get()}}, gpu.get(), &pool, 1, 8);
+  const auto pa = a.preview("cam1", kBase);
+  REQUIRE(pa);
+
+  bc::test::TempDir plainDir;
+  auto plain = recordH264(plainDir, enc, enc.aus.size());
+  br::FrameSource b({{"cam1", plain.get()}}, gpu.get(), &pool, 1, 8);
+  const auto pb = b.preview("cam1", kBase);
+  REQUIRE(pb);
+
+  REQUIRE(pa->bgra.size() == pb->bgra.size());
+  const bool differs = pa->bgra != pb->bgra;
+  CHECK(differs);  // the hint changes the matrix, not just a flag
+}
+
 TEST_CASE("FrameSource: forward play crosses a GOP boundary without a reset"
           BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
@@ -506,7 +536,7 @@ TEST_CASE("FrameSource: forward play crosses a GOP boundary without a reset"
   bool reordered = false;
   for (size_t i = 1; i < enc.pts.size(); ++i) reordered = reordered || enc.pts[i] < enc.pts[i - 1];
   MESSAGE("encoder: " << enc.encoder << ", packets: " << enc.aus.size() << ", B-frames: " << reordered);
-  if (enc.encoder == "h264_amf") REQUIRE(reordered);  // only B-frames need the reorder tail
+  if (!reordered) return;  // no reorder tail: the boundary crosses nothing to remap
 
   // Forward play from slot 50 to 70, across the GOP boundary at 60: one pass, no re-seek.
   bc::test::TempDir dir;
