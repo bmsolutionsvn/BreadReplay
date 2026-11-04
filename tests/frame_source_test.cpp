@@ -82,7 +82,7 @@ struct Encoded {
   int fps = 30;
 };
 
-Encoded encodeH264(int frames, int gop, int bframes) {
+Encoded encodeH264(int frames, int gop, int bframes, bool colour = false) {
   Encoded out;
   // libx264 is not linked into the product build; AMF honours B-frames, MF's camera record does not.
   const char* names[] = {"libx264", "h264_amf", "h264_mf"};
@@ -147,8 +147,10 @@ Encoded encodeH264(int frames, int gop, int bframes) {
       }
     }
     for (int y = 0; y < ctx->height / 2; ++y) {
-      std::memset(frame->data[1] + y * frame->linesize[1], 128, static_cast<size_t>(ctx->width / 2));
-      std::memset(frame->data[2] + y * frame->linesize[2], 128, static_cast<size_t>(ctx->width / 2));
+      std::memset(frame->data[1] + y * frame->linesize[1], colour ? 90 : 128,
+                  static_cast<size_t>(ctx->width / 2));
+      std::memset(frame->data[2] + y * frame->linesize[2], colour ? 200 : 128,
+                  static_cast<size_t>(ctx->width / 2));
     }
     frame->pts = i;
     frame->duration = 1;
@@ -251,6 +253,31 @@ std::vector<uint8_t> readLuma(bc::GpuDevice& gpu, const br::DecodedFrame& f) {
   }
   gpu.context()->Unmap(staging.Get(), 0);
   return y;
+}
+// Records the first `count` access units of `enc` and reopens the store, as a restarted player does.
+std::unique_ptr<br::InputStore> recordH264(const bc::test::TempDir& dir, const Encoded& enc, size_t count,
+                                         br::StoredColour colour = br::StoredColour::Unknown) {
+  br::SegmentHeader header;
+  header.inputId = "cam1";
+  header.width = enc.w;
+  header.height = enc.h;
+  header.rate = bc::Rate{30, 1};
+  header.codec = br::StoredCodec::H264;
+  {
+    br::InputStore store(dir.path, header);
+    br::Recorder rec(store, br::VmxQuality::SQ, 512, 1);
+    for (size_t i = 0; i < count; ++i) {
+      const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+      rec.pushCodedAu(ts, kBase + enc.pts[i] * 33333, br::StoredCodec::H264, enc.w, enc.h,
+                      enc.key[i], enc.aus[i], colour);
+    }
+    for (int i = 0; i < 400 && rec.stats().framesWritten < count; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(rec.stats().framesWritten == count);
+    rec.stop();
+  }
+  return std::make_unique<br::InputStore>(dir.path, header);
 }
 }  // namespace
 
@@ -418,6 +445,129 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording plays in display order"
   for (uint8_t v : key) avgKey += v;
   avgKey /= static_cast<double>(key.size());
   CHECK(std::abs(avgPreview - avgKey) <= 12.0);
+}
+
+TEST_CASE("FrameSource: a recording that signals BT.709 is decoded as BT.709 at any size"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(30, 30, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 30);
+
+  const auto record = [&](bc::test::TempDir& dir, br::StoredColour colour) {
+    br::SegmentHeader header;
+    header.inputId = "cam1";
+    header.width = enc.w;
+    header.height = enc.h;
+    header.rate = bc::Rate{30, 1};
+    header.codec = br::StoredCodec::H264;
+    auto store = std::make_unique<br::InputStore>(dir.path, header);
+    br::Recorder rec(*store, br::VmxQuality::SQ, 512, 1);
+    for (size_t i = 0; i < enc.aus.size(); ++i) {
+      const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+      rec.pushCodedAu(ts, kBase + enc.pts[i] * 33333, br::StoredCodec::H264, enc.w, enc.h,
+                      enc.key[i], enc.aus[i], colour);
+    }
+    for (int i = 0; i < 400 && rec.stats().framesWritten < enc.aus.size(); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(rec.stats().framesWritten == enc.aus.size());
+    rec.stop();
+    return std::make_unique<br::InputStore>(dir.path, header);
+  };
+
+  bc::test::TempDir taggedDir;
+  auto tagged = record(taggedDir, br::StoredColour::Bt709);
+  br::FrameSource src({{"cam1", tagged.get()}}, gpu.get(), &pool, 1, 64);
+  const auto f = src.get("cam1", kBase);
+  REQUIRE(f);
+  REQUIRE(f->picture.tex);
+  CHECK(f->picture.bt709);
+
+  // 640x360, so the decoder's height rule leaves it BT.601 when nothing signals otherwise.
+  bc::test::TempDir plainDir;
+  auto plain = record(plainDir, br::StoredColour::Unknown);
+  br::FrameSource plainSrc({{"cam1", plain.get()}}, gpu.get(), &pool, 1, 64);
+  const auto g = plainSrc.get("cam1", kBase);
+  REQUIRE(g);
+  REQUIRE(g->picture.tex);
+  CHECK_FALSE(g->picture.bt709);
+}
+
+TEST_CASE("FrameSource: a preview uses the segment's colour space"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(30, 30, 2, true);  // non-neutral chroma, so the matrix shows
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 30);
+
+  bc::test::TempDir dir;
+  auto tagged = recordH264(dir, enc, enc.aus.size(), br::StoredColour::Bt709);
+  br::FrameSource a({{"cam1", tagged.get()}}, gpu.get(), &pool, 1, 8);
+  const auto pa = a.preview("cam1", kBase);
+  REQUIRE(pa);
+
+  bc::test::TempDir plainDir;
+  auto plain = recordH264(plainDir, enc, enc.aus.size());
+  br::FrameSource b({{"cam1", plain.get()}}, gpu.get(), &pool, 1, 8);
+  const auto pb = b.preview("cam1", kBase);
+  REQUIRE(pb);
+
+  REQUIRE(pa->bgra.size() == pb->bgra.size());
+  const bool differs = pa->bgra != pb->bgra;
+  CHECK(differs);  // the hint changes the matrix, not just a flag
+}
+
+TEST_CASE("FrameSource: forward play crosses a GOP boundary without a reset"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(130, 60, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 130);
+  bool reordered = false;
+  for (size_t i = 1; i < enc.pts.size(); ++i) reordered = reordered || enc.pts[i] < enc.pts[i - 1];
+  MESSAGE("encoder: " << enc.encoder << ", packets: " << enc.aus.size() << ", B-frames: " << reordered);
+  if (!reordered) return;  // no reorder tail: the boundary crosses nothing to remap
+
+  // Forward play from slot 50 to 70, across the GOP boundary at 60: one pass, no re-seek.
+  bc::test::TempDir dir;
+  auto store = recordH264(dir, enc, enc.aus.size());
+  br::FrameSource src({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  const auto warm = src.get("cam1", kBase + 50 * 33333);  // cue before the boundary
+  REQUIRE(warm);
+  REQUIRE(warm->tsUs == kBase + 50 * 33333);
+  const auto resets = src.resets();
+  const auto decodes = src.decodes();
+  for (int i = 51; i <= 70; ++i) {
+    const auto f = src.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
+    REQUIRE(f);
+    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  }
+  CHECK(src.resets() == resets);         // the decoder carries on into the next GOP
+  CHECK(src.decodes() - decodes <= 25);  // one pass at 30 fps, not a re-feed
+
+  // A recording that stops on the next GOP's keyframe: draining the tail must keep that
+  // keyframe under its display slot, or the next get() seeks back to it.
+  bc::test::TempDir shortDir;
+  auto shortStore = recordH264(shortDir, enc, 61);
+  br::FrameSource edge({{"cam1", shortStore.get()}}, gpu.get(), &pool, 1, 64);
+  REQUIRE(edge.get("cam1", kBase + 50 * 33333));
+  const auto edgeResets = edge.resets();
+  for (int i = 51; i <= 60; ++i) {
+    const auto f = edge.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
+    REQUIRE(f);
+    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  }
+  CHECK(edge.resets() == edgeResets);
 }
 
 TEST_CASE("FrameSource: an open GOP at the live edge is remapped once it completes"

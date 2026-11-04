@@ -182,6 +182,8 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   const Key want{id, ref.tsUs};
   const size_t count = store.frameCountIn(seg);
   const size_t gopEnd = std::min(count, store.nextKeyframeAfter(*k));
+  // The segment's own matrix, when it signalled one; Unknown keeps the decoder's height rule.
+  const StoredColour hint = store.colourOf(ref);
   // The last GOP of the segment being written can still gain AUs, so its display order is not final.
   const bool gopFinal = gopEnd < count || !store.isWriting(seg);
   if (gopFinal) {
@@ -202,6 +204,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
           it = cache_.erase(it);
         }
       }
+      ++resets_;
       d.hx->reset();
       d.primed = false;
     }
@@ -211,45 +214,59 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   }
 
   const auto feed = [&](size_t start) {
-    // Within one GOP the r-th picture in display order takes the r-th arrival slot.
-    std::map<int64_t, std::deque<int64_t>> slots;
-    {
+    // One display-order table per GOP: a picture can arrive in the reorder tail of the GOP
+    // before its own, so keep every table the decoder is still catching up with.
+    std::map<int64_t, std::deque<std::pair<int64_t, bool>>> slots;  // pts -> (slot ts, provisional)
+    const auto addGop = [&](size_t keyIndex) -> size_t {
+      const auto key = store.frameAt(seg, keyIndex);
+      if (!key) return keyIndex + 1;
+      const size_t end = std::min(count, store.nextKeyframeAfter(*key));
+      const bool final = end < count || !store.isWriting(seg);
+      // A GOP tabled while still open: its pictures may be in decode order, so remember it and
+      // let the provisional drop re-feed it once it closes, even if no get() landed in it meanwhile.
+      if (!final) provisional_.insert(std::make_tuple(id, seg, keyIndex));
       std::vector<std::pair<int64_t, size_t>> order;  // (source pts, decode index)
-      order.reserve(gopEnd > k->index ? gopEnd - k->index : 0);
-      for (size_t i = k->index; i < gopEnd; ++i) {
-        const auto fr = store.frameAt(seg, i);
+      order.reserve(end > keyIndex ? end - keyIndex : 0);
+      for (size_t j = keyIndex; j < end; ++j) {
+        const auto fr = store.frameAt(seg, j);
         if (!fr) break;
-        order.emplace_back(store.srcPtsOf(*fr), i);
+        order.emplace_back(store.srcPtsOf(*fr), j);
       }
       // An open GOP or a source that gives no ordering (all pts equal) keeps decode order.
-      if (gopFinal && order.size() > 1 && order.front().first != order.back().first) {
+      if (final && order.size() > 1 && order.front().first != order.back().first) {
         std::sort(order.begin(), order.end());
       }
       for (size_t r = 0; r < order.size(); ++r) {
-        const auto slot = store.frameAt(seg, k->index + r);
+        const auto slot = store.frameAt(seg, keyIndex + r);
         if (!slot) break;
-        slots[order[r].first].push_back(slot->tsUs);
+        slots[order[r].first].push_back({slot->tsUs, !final});
       }
-    }
+      return end;
+    };
     // A repeated source pts (a broken source) takes the slots in decode order, one per picture.
-    const auto takeSlot = [&slots](int64_t pts) -> int64_t {
+    const auto takeSlot = [&slots](int64_t pts) -> std::pair<int64_t, bool> {
       const auto it = slots.find(pts);
-      if (it == slots.end() || it->second.empty()) return INT64_MIN;
-      const int64_t ts = it->second.front();
+      if (it == slots.end() || it->second.empty()) return {INT64_MIN, false};
+      const auto slot = it->second.front();
       it->second.pop_front();
-      return ts;
+      return slot;
+    };
+    const auto emitPicture = [&](bc::VideoFrameIn pic) {
+      if (hint != StoredColour::Unknown) pic.bt709 = hint == StoredColour::Bt709;
+      const auto [slot, provisional] = takeSlot(pic.ptsUs);
+      if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, provisional);
     };
 
+    size_t tableEnd = addGop(k->index);
     size_t i = start;
     for (; i < count; ++i) {
+      // Entering the next GOP of a forward play: table it instead of dropping its pictures.
+      while (i >= tableEnd && tableEnd < count) tableEnd = addGop(tableEnd);
       const auto fr = store.frameAt(seg, i);
       if (!fr) break;
       const auto au = store.readVideo(*fr, false);
       if (au.empty()) break;
-      d.hx->decode(au, store.srcPtsOf(*fr), [&](bc::VideoFrameIn pic) {
-        const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
-      });
+      d.hx->decode(au, store.srcPtsOf(*fr), emitPicture);
       d.primed = true;
       d.seg = seg;
       d.fedIndex = i;
@@ -259,11 +276,10 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
       if (i > ref.index + 16) break;
     }
     if (i == count) {
-      // The last pictures of the segment sit in the decoder until it is drained.
-      d.hx->flush([&](bc::VideoFrameIn pic) {
-        const int64_t slot = takeSlot(pic.ptsUs);
-        if (slot != INT64_MIN) cachePicture(id, store, std::move(pic), w, h, slot, !gopFinal);
-      });
+      // The last pictures of the segment sit in the decoder until it is drained; the tail can
+      // belong to a GOP after the requested one, so table it before the flush.
+      while (tableEnd < count) tableEnd = addGop(tableEnd);
+      d.hx->flush(emitPicture);
       d.primed = false;
     }
     return cache_.count(want) != 0;
@@ -276,12 +292,14 @@ std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string
   if (carryOn) {
     found = feed(d.fedIndex + 1);
   } else {
+    ++resets_;
     d.hx->reset();  // seek: the keyframe is the first decodable frame
     d.primed = false;
     found = feed(k->index);
   }
   if (!found && carryOn) {
     // The picture was fed earlier and has left the cache since: one seek is the only way back.
+    ++resets_;
     d.hx->reset();
     d.primed = false;
     feed(k->index);
@@ -322,6 +340,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   if (!gpu_ || !pool_ || !conv_) return nullptr;
   const auto key = store.keyframeAtOrBefore(*ref);
   if (!key || key->segment != ref->segment) return nullptr;
+  const StoredColour hint = store.colourOf(*key);
   auto& d = decoders_[{inputId, 2}];
   const StoredCodec codec = store.codecOf(*key);
   if (!d.preview || d.previewCodec != codec || d.pw != w || d.ph != h) {
@@ -339,6 +358,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   std::shared_ptr<const PreviewImage> image;
   const auto build = [&](bc::VideoFrameIn pic) {
     if (image || !pic.tex) return;
+    if (hint != StoredColour::Unknown) pic.bt709 = hint == StoredColour::Bt709;
     const Size ps = VmxDecoder::previewSize(w, h);
     auto linear = conv_->toLinear(*pic.tex, pic.layout, pic.fullRange, pic.bt709);
     auto fitted = conv_->fit(*linear, ps.w, ps.h);

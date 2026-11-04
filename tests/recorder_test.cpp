@@ -197,6 +197,22 @@ TEST_CASE("Recorder: a codec change starts a new segment") {
   CHECK(store.codecOf(br::FrameRef{1, 0, 0}) == br::StoredCodec::Vmx);
 }
 
+TEST_CASE("Recorder: a colour change starts a new segment") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  br::Recorder rec(store, br::VmxQuality::SQ, 8, 1);
+  const int64_t base = baseTs();
+  const auto au = std::vector<uint8_t>(8, 5);
+  rec.pushCodedAu(base, base, br::StoredCodec::H264, 320, 180, true, au, br::StoredColour::Bt709);
+  rec.pushCodedAu(base + 33'333, base + 33'333, br::StoredCodec::H264, 320, 180, true, au,
+                  br::StoredColour::Bt601);
+  REQUIRE(waitFor([&] { return rec.stats().framesWritten == 2; }, 5000));
+  rec.stop();
+  REQUIRE(store.segments().size() == 2);
+  CHECK(store.colourOf(br::FrameRef{0, 0, base}) == br::StoredColour::Bt709);
+  CHECK(store.colourOf(br::FrameRef{1, 0, base + 33'333}) == br::StoredColour::Bt601);
+}
+
 TEST_CASE("Recorder: a size change starts a new segment") {
   bc::test::TempDir dir;
   br::InputStore store(dir.path, proto());

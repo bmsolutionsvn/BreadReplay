@@ -264,6 +264,43 @@ TEST_CASE("Segment: v3 frames keep the source pts beside the arrival time") {
   CHECK(r->readVideo(0, false) == makeVideo(0));
 }
 
+TEST_CASE("Segment: the colour space rides with the header, and older segments read unknown") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "seg";
+  auto h = headerFor();
+  h.codec = br::StoredCodec::Hevc;
+  h.colour = br::StoredColour::Bt709;
+  {
+    br::SegmentWriter w(base, h);
+    w.append(1'000'000, makeVideo(0), 0, makeAudio(0));
+    w.close();
+  }
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  CHECK(r->header().version == 3);  // the v1-v3 layout still reads the same
+  CHECK(r->header().codec == br::StoredCodec::Hevc);
+  CHECK(r->header().colour == br::StoredColour::Bt709);
+
+  // A v3 segment written before the change left those bits zero: unknown, not a wrong matrix.
+  const auto old = dir.path / "old";
+  {
+    br::SegmentHeader o = headerFor();
+    o.codec = br::StoredCodec::H264;
+    br::SegmentWriter w(old, o);
+    w.append(2'000'000, makeVideo(1), 0, makeAudio(1));
+    w.close();
+  }
+  auto ro = br::SegmentReader::open(old);
+  REQUIRE(ro.has_value());
+  CHECK(ro->header().colour == br::StoredColour::Unknown);
+
+  const auto v2 = dir.path / "v2";
+  writeV2Segment(v2, 2);
+  auto rv2 = br::SegmentReader::open(v2);
+  REQUIRE(rv2.has_value());
+  CHECK(rv2->header().colour == br::StoredColour::Unknown);
+}
+
 TEST_CASE("Segment: a v2 segment reads with its source pts equal to the arrival time") {
   bc::test::TempDir dir;
   const auto base = dir.path / "v2";

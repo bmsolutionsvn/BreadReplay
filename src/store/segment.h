@@ -11,10 +11,13 @@
 namespace br {
 
 enum class StoredCodec : uint8_t { Vmx, H264, Hevc };
+// The matrix a compressed segment was recorded in; Unknown keeps the decoder's height rule.
+enum class StoredColour : uint8_t { Unknown, Bt601, Bt709 };
 
 struct SegmentHeader {
   uint32_t version = 3;
   StoredCodec codec = StoredCodec::Vmx;
+  StoredColour colour = StoredColour::Unknown;
   std::string inputId;
   uint32_t width = 0, height = 0;
   bc::Rate rate;

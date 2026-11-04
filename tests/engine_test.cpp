@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include <libavutil/pixfmt.h>
+
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -267,6 +269,13 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
       },
       30000));
   const int64_t first = engine.store("cam0")->segments().front().firstTs;
+  {
+    const auto* s = engine.store("cam0");
+    REQUIRE(s);
+    const auto ref = s->find(first);
+    REQUIRE(ref.has_value());
+    CHECK(s->colourOf(*ref) == br::StoredColour::Bt709);  // the OMT-HX tap's hint
+  }
   const int64_t cueT = first + 1'500'000;
 
   // Park Preview away from the live edge so it does not decode while Output reverses.
@@ -308,6 +317,14 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
   CHECK(decoded <= 60);  // one GOP's worth per seek
 }
 #endif
+
+TEST_CASE("Engine: an SRT packet's colour space becomes the stored hint") {
+  CHECK(br::srtColour(AVCOL_SPC_BT709) == br::StoredColour::Bt709);
+  CHECK(br::srtColour(AVCOL_SPC_BT470BG) == br::StoredColour::Bt601);
+  CHECK(br::srtColour(AVCOL_SPC_SMPTE170M) == br::StoredColour::Bt601);
+  CHECK(br::srtColour(AVCOL_SPC_UNSPECIFIED) == br::StoredColour::Unknown);
+  CHECK(br::srtColour(AVCOL_SPC_BT2020_NCL) == br::StoredColour::Unknown);
+}
 
 TEST_CASE("Engine: statusJson reports nativeVideo") {
   Fixture f;

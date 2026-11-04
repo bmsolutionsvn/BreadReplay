@@ -33,7 +33,8 @@ class Recorder {
   void pushCoded(int64_t tsUs, std::vector<uint8_t> vmx);  // OMT pass-through
   // One H.264/HEVC access unit as it arrived (Annex-B); stored without decoding or encoding.
   void pushCodedAu(int64_t tsUs, int64_t srcPtsUs, StoredCodec codec, uint32_t w, uint32_t h,
-                   bool keyframe, std::vector<uint8_t> au);
+                   bool keyframe, std::vector<uint8_t> au,
+                   StoredColour colour = StoredColour::Unknown);
   void pushAudio(std::span<const float> samples, int channels, int sampleRate);
   RecorderStats stats() const;
   void stop();
@@ -46,6 +47,7 @@ class Recorder {
     bool coded = false;  // VMX as received
     bool codedAu = false;  // H.264/HEVC as received
     StoredCodec codec = StoredCodec::Vmx;
+    StoredColour colour = StoredColour::Unknown;
     bool keyframe = true;
     uint32_t w = 0, h = 0;
     int stride = 0;
@@ -58,6 +60,7 @@ class Recorder {
     bool coded = false;
     bool codedAu = false;
     StoredCodec codec = StoredCodec::Vmx;
+    StoredColour colour = StoredColour::Unknown;
     bool keyframe = true;
     std::vector<uint8_t> raw;
     int64_t tsUs = 0;
