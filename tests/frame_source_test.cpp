@@ -252,6 +252,30 @@ std::vector<uint8_t> readLuma(bc::GpuDevice& gpu, const br::DecodedFrame& f) {
   gpu.context()->Unmap(staging.Get(), 0);
   return y;
 }
+// Records the first `count` access units of `enc` and reopens the store, as a restarted player does.
+std::unique_ptr<br::InputStore> recordH264(const bc::test::TempDir& dir, const Encoded& enc, size_t count) {
+  br::SegmentHeader header;
+  header.inputId = "cam1";
+  header.width = enc.w;
+  header.height = enc.h;
+  header.rate = bc::Rate{30, 1};
+  header.codec = br::StoredCodec::H264;
+  {
+    br::InputStore store(dir.path, header);
+    br::Recorder rec(store, br::VmxQuality::SQ, 512, 1);
+    for (size_t i = 0; i < count; ++i) {
+      const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+      rec.pushCodedAu(ts, kBase + enc.pts[i] * 33333, br::StoredCodec::H264, enc.w, enc.h,
+                      enc.key[i], enc.aus[i]);
+    }
+    for (int i = 0; i < 400 && rec.stats().framesWritten < count; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(rec.stats().framesWritten == count);
+    rec.stop();
+  }
+  return std::make_unique<br::InputStore>(dir.path, header);
+}
 }  // namespace
 
 TEST_CASE("FrameSource: get returns the frame at or before") {
@@ -468,6 +492,52 @@ TEST_CASE("FrameSource: a recording that signals BT.709 is decoded as BT.709 at 
   REQUIRE(g);
   REQUIRE(g->picture.tex);
   CHECK_FALSE(g->picture.bt709);
+}
+
+TEST_CASE("FrameSource: forward play crosses a GOP boundary without a reset"
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(130, 60, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 130);
+  bool reordered = false;
+  for (size_t i = 1; i < enc.pts.size(); ++i) reordered = reordered || enc.pts[i] < enc.pts[i - 1];
+  MESSAGE("encoder: " << enc.encoder << ", packets: " << enc.aus.size() << ", B-frames: " << reordered);
+  if (enc.encoder == "h264_amf") REQUIRE(reordered);  // only B-frames need the reorder tail
+
+  // Forward play from slot 50 to 70, across the GOP boundary at 60: one pass, no re-seek.
+  bc::test::TempDir dir;
+  auto store = recordH264(dir, enc, enc.aus.size());
+  br::FrameSource src({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  const auto warm = src.get("cam1", kBase + 50 * 33333);  // cue before the boundary
+  REQUIRE(warm);
+  REQUIRE(warm->tsUs == kBase + 50 * 33333);
+  const auto resets = src.resets();
+  const auto decodes = src.decodes();
+  for (int i = 51; i <= 70; ++i) {
+    const auto f = src.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
+    REQUIRE(f);
+    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  }
+  CHECK(src.resets() == resets);         // the decoder carries on into the next GOP
+  CHECK(src.decodes() - decodes <= 25);  // one pass at 30 fps, not a re-feed
+
+  // A recording that stops on the next GOP's keyframe: draining the tail must keep that
+  // keyframe under its display slot, or the next get() seeks back to it.
+  bc::test::TempDir shortDir;
+  auto shortStore = recordH264(shortDir, enc, 61);
+  br::FrameSource edge({{"cam1", shortStore.get()}}, gpu.get(), &pool, 1, 64);
+  REQUIRE(edge.get("cam1", kBase + 50 * 33333));
+  const auto edgeResets = edge.resets();
+  for (int i = 51; i <= 60; ++i) {
+    const auto f = edge.get("cam1", kBase + static_cast<int64_t>(i) * 33333);
+    REQUIRE(f);
+    CHECK(f->tsUs == kBase + static_cast<int64_t>(i) * 33333);
+  }
+  CHECK(edge.resets() == edgeResets);
 }
 
 TEST_CASE("FrameSource: an open GOP at the live edge is remapped once it completes"

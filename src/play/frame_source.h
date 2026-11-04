@@ -46,6 +46,7 @@ class FrameSource {
   std::shared_ptr<const PreviewImage> preview(const std::string& inputId, int64_t tsUs);
   uint64_t diskReads() const { return diskReads_.load(); }
   uint64_t decodes() const { return decodes_.load(); }  // pictures decoded
+  uint64_t resets() const { return resets_.load(); }    // decoder seeks
 
  private:
   struct Key {
@@ -94,6 +95,7 @@ class FrameSource {
   std::set<std::tuple<std::string, size_t, size_t>> provisional_;
   std::atomic<uint64_t> diskReads_{0};
   std::atomic<uint64_t> decodes_{0};
+  std::atomic<uint64_t> resets_{0};
 };
 
 }  // namespace br
