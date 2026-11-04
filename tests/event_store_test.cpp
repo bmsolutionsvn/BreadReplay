@@ -57,17 +57,18 @@ TEST_CASE("Events: angleAt follows cuts") {
   CHECK(br::angleAt(*store.find(id), 107 * kS) == "cam3");
 }
 
-TEST_CASE("Events: recordAngle overwrites what comes after") {
+TEST_CASE("Events: recordAngle replaces the point at its time and keeps the rest") {
   br::EventStore store;
   const int id = store.lastN(110 * kS, 20 * kS, "cam1").id;
   store.recordAngle(id, 104 * kS, "cam2");
   store.recordAngle(id, 106 * kS, "cam3");
   store.recordAngle(id, 104 * kS, "cam4");
   const auto& e = *store.find(id);
-  REQUIRE(e.angles.size() == 2);
+  REQUIRE(e.angles.size() == 3);
   CHECK(e.angles[0].inputId == "cam1");
   CHECK(e.angles[1].inputId == "cam4");
-  CHECK(br::angleAt(e, 110 * kS) == "cam4");
+  CHECK(e.angles[2].inputId == "cam3");
+  CHECK(br::angleAt(e, 110 * kS) == "cam3");
 }
 
 TEST_CASE("Events: ids are never reused") {

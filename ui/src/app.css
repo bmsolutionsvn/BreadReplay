@@ -172,6 +172,29 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .tl .lane { height: 10px; }
 .tl .rec { position: absolute; top: 2px; bottom: 2px; background: #2f6b45; border-radius: 2px; }
 .tl .gap { position: absolute; top: 0; bottom: 0; background: #e0453a; border-radius: 2px; }
+.tl-tracks { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px; }
+.tl-labels { display: grid; gap: 4px; }
+.tl-lanes { position: relative; display: grid; gap: 4px; }
+.tl .cams-lab { display: flex; align-items: center; gap: 4px; height: 16px; }
+.tl .num { display: inline-grid; place-items: center; min-width: 16px; height: 16px; border-radius: 3px; font: 700 11px var(--mono); color: #0b0e12; }
+.tl .lane { height: 16px; }
+.tl .lane-hit { position: absolute; inset: 0; }
+.tl .inout { pointer-events: none; }
+.tl .inout .handle, .tl .inout .slip { pointer-events: auto; }
+.tl .handle { position: absolute; top: 0; bottom: 0; width: 6px; background: var(--pvw); cursor: ew-resize; }
+.tl .handle.in { left: -3px; }
+.tl .handle.out { right: -3px; }
+.tl .slip { position: absolute; left: 6px; right: 6px; top: -3px; height: 6px; background: var(--pvw); opacity: .55; cursor: grab; }
+.tl .switch { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; cursor: ew-resize; }
+.tl .switch:hover { background: rgba(255, 255, 255, .25); }
+.tl .seg.sel { outline: 2px solid #fff; outline-offset: -2px; }
+.tl .edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+.tl .order-row .order-lane { display: flex; gap: 4px; overflow: hidden; }
+.tl .order { position: relative; padding: 1px 6px; border-radius: 3px; background: #263241; color: var(--bm-text); font-size: 11px; cursor: grab; white-space: nowrap; }
+.tl .order.dragging { outline: 1px dashed var(--bm-text-muted); }
+.tl .tl-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.tl .tl-actions button { width: 28px; height: 28px; padding: 0; border: 1px solid var(--bm-border); border-radius: 3px; background: var(--bm-rail); color: var(--bm-text); font-size: 16px; line-height: 1; }
+.tl .tl-actions button:disabled { opacity: .35; }
 
 /* status bar */
 .status { display: flex; align-items: center; gap: 12px; padding: 5px 10px; background: var(--bm-rail); border-top: 1px solid var(--bm-border); font: 400 11px var(--mono); color: var(--bm-text-dim); min-width: 0; overflow: hidden; }

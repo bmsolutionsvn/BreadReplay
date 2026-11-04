@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 
 #include "core/timecode.h"
@@ -50,7 +51,80 @@ std::string CommandRouter::markAngle() const {
   return inputs.empty() ? std::string("cam1") : inputs.front().id;
 }
 
+bool CommandRouter::isEdit(const std::string& name, const nlohmann::json& cmd) const {
+  if (name == "mark.in" || name == "mark.out" || name == "mark.lastN" || name == "event.update" ||
+      name == "event.trim" || name == "event.delete" || name == "event.clearCuts" ||
+      name == "event.move" || name == "list.new" || name == "list.rename" ||
+      name == "list.delete" || name == "list.reorder") {
+    return true;
+  }
+  // Riding while a replay plays is part of that pass, not an edit of its own.
+  if (name == "player.lever" || name == "player.preset" || name == "player.zoom") {
+    return !engine_.playerFor(cmd.value("player", std::string("preview"))).state().playing;
+  }
+  return false;
+}
+
+bool CommandRouter::isRide(const std::string& name, const nlohmann::json&, const std::string& who) const {
+  if (name == "take" || name == "highlight.play" || name == "player.play") return true;
+  if (name == "player.angle" || name == "player.lever" || name == "player.preset" ||
+      name == "player.zoom") {
+    return engine_.playerFor(who).state().playing;
+  }
+  return false;
+}
+
+void CommandRouter::settlePass() {
+  if (!passBefore_) return;
+  if (!passOwner_.empty()) engine_.playerFor(passOwner_).endRide();
+  if (engine_.events().version() != passBefore_->version()) engine_.history().record(*passBefore_);
+  passBefore_.reset();
+  passOwner_.clear();
+}
+
+bool CommandRouter::hasPendingPass(const EventStore& store) const {
+  return passBefore_ && store.version() != passBefore_->version();
+}
+
 nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
+  try {
+    const std::string name = cmd.value("cmd", std::string{});
+    const std::string who = cmd.value("player", std::string("preview"));
+    const bool edit = isEdit(name, cmd);
+    // Anything that touches the store ends the ride first, so the pass is its own step.
+    if (edit || name == "edit.undo" || name == "edit.redo" || name == "show.new" ||
+        name == "show.open" || name == "take" || name == "highlight.play") {
+      settlePass();
+    } else if ((name == "player.cue" || name == "player.cueAt" || name == "player.live" ||
+                name == "player.pause") &&
+               passBefore_ && passOwner_ == who) {
+      settlePass();
+    }
+    if (name == "player.play" && passBefore_) settlePass();
+
+    const std::string owner = (name == "take" || name == "highlight.play") ? "output" : who;
+    const bool ride = isRide(name, cmd, who);
+    std::optional<EventStore> rideBefore;
+    if (ride) {
+      if (passBefore_ && passOwner_ != owner) settlePass();
+      if (!passBefore_) {
+        rideBefore = engine_.events();
+        passOwner_ = owner;
+      }
+    }
+
+    std::optional<EventStore> before;
+    if (edit) before = engine_.events();
+    auto reply = handleImpl(cmd);
+    if (rideBefore) passBefore_ = *rideBefore;
+    if (before && engine_.events().version() != before->version()) engine_.history().record(*before);
+    return reply;
+  } catch (const std::exception& e) {
+    return {{"ok", false}, {"error", e.what()}};
+  }
+}
+
+nlohmann::json CommandRouter::handleImpl(const nlohmann::json& cmd) {
   try {
     const std::string name = cmd.value("cmd", std::string{});
     if (name.empty()) return {{"ok", false}, {"error", "cmd is required"}};
@@ -75,6 +149,8 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       engine_.saveShow();
       return {{"ok", true}};
     }
+    if (name == "edit.undo") return {{"ok", true}, {"done", engine_.history().undo(engine_.events())}};
+    if (name == "edit.redo") return {{"ok", true}, {"done", engine_.history().redo(engine_.events())}};
 
     if (name == "input.add") {
       engine_.addInput(inputFromJson(cmd));
@@ -166,6 +242,25 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
         std::sort(e->angles.begin(), e->angles.end(),
                   [](const AngleCut& x, const AngleCut& y) { return x.tUs < y.tUs; });
       }
+      if (cmd.contains("speeds")) {
+        e->speeds.clear();
+        for (const auto& s : cmd["speeds"]) {
+          if (!s.is_object() || !s.contains("tUs")) continue;
+          e->speeds.push_back(SpeedPoint{s.value("tUs", int64_t{0}), s.value("speed", 1.0)});
+        }
+        std::sort(e->speeds.begin(), e->speeds.end(),
+                  [](const SpeedPoint& x, const SpeedPoint& y) { return x.tUs < y.tUs; });
+      }
+      if (cmd.contains("zooms")) {
+        e->zooms.clear();
+        for (const auto& z : cmd["zooms"]) {
+          if (!z.is_object() || !z.contains("tUs")) continue;
+          e->zooms.push_back(ZoomPoint{z.value("tUs", int64_t{0}), zoomFromJson(z.value("rect", nlohmann::json::object()))});
+        }
+        std::sort(e->zooms.begin(), e->zooms.end(),
+                  [](const ZoomPoint& x, const ZoomPoint& y) { return x.tUs < y.tUs; });
+      }
+      if (e->outUs < e->inUs) e->outUs = e->inUs;
       engine_.events().bumpVersion();
       return {{"ok", true}};
     }
@@ -176,7 +271,11 @@ nlohmann::json CommandRouter::handle(const nlohmann::json& cmd) {
       return {{"ok", true}};
     }
     if (name == "event.delete") {
-      engine_.events().remove(cmd.value("id", 0));
+      if (cmd.contains("ids")) {
+        for (int id : cmd.value("ids", std::vector<int>{})) engine_.events().remove(id);
+      } else {
+        engine_.events().remove(cmd.value("id", 0));
+      }
       return {{"ok", true}};
     }
     if (name == "event.clearCuts") {

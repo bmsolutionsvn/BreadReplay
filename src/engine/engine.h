@@ -14,6 +14,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/vmx_codec.h"
+#include "engine/command_router.h"
+#include "events/edit_history.h"
 #include "events/show_file.h"
 #include "io/input.h"
 #include "io/output.h"
@@ -59,6 +61,7 @@ class Engine {
 
   Show& show() { return show_; }
   EventStore& events() { return show_.events; }
+  EditHistory& history() { return history_; }
   const std::filesystem::path& folder() const { return folder_; }
   int64_t now() const;
   int64_t newestTs() const;
@@ -134,6 +137,8 @@ class Engine {
 
   EngineDeps deps_;
   Show show_;
+  EditHistory history_;
+  CommandRouter router_{*this};
   std::filesystem::path folder_;
   std::filesystem::path showJson_;
 

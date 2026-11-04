@@ -156,6 +156,24 @@ TEST_CASE("OutputPlayer: highlight plays the list in order") {
   op.stop();
 }
 
+TEST_CASE("OutputPlayer: a highlight plays the replays as they were at Play") {
+  Fixture f;
+  f.settings.rate = bc::Rate{60, 1};
+  const int a = f.makeEvent(kBase, kBase + 500'000);
+  const int b = f.makeEvent(kBase + 500'000, kBase + 1'000'000);
+  auto out = std::make_unique<bc::test::FakeOutput>(false);
+  auto* raw = out.get();
+  br::OutputPlayer op(*f.player, *f.src, *f.renderer, f.events, f.settings);
+  op.setOutputs(oneOutput(std::move(out)));
+  op.playEvents({a, b});
+  f.events.remove(b);
+  for (int i = 0; i < 100 && op.currentEvent() != b; ++i) op.tickOnce();
+  CHECK(op.currentEvent() == b);
+  for (int i = 0; i < 10; ++i) op.tickOnce();
+  CHECK(f.waitDelivered(*raw, 40));
+  op.stop();
+}
+
 TEST_CASE("OutputPlayer: a selection plays in displayed order, whatever order it was sent") {
   Fixture f;
   const int a = f.events.lastN(kBase + 1 * kS, 1 * kS, "cam1").id;  // root

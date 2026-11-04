@@ -14,6 +14,7 @@ import { groupOf } from './screen/selection';
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
+import { deleteBlock, split } from './screen/timelineEdits';
 import { TitleBar } from './screen/TitleBar';
 import { setEvents, setStatus, useEvents, useStatus } from './state/store';
 
@@ -27,6 +28,8 @@ export function App({ client }: { client: Client }) {
   const haveStatus = status !== null;
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedBlock, setSelectedBlock] = useState<number | null>(null);
+  const [fitKey, setFitKey] = useState(0);
   const [stamp, setStamp] = useState<MarkStamp | null>(null);
   const [lastMark, setLastMark] = useState<MarkStamp | null>(null);
   const stampTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -93,6 +96,10 @@ export function App({ client }: { client: Client }) {
     setSelectedIds([last]);
   }, [events, selected]);
 
+  const event = events?.events.find((e) => e.id === selected) ?? null;
+  const pos = status?.players.preview.posUs ?? 0;
+  const periodUs = Math.round(1_000_000 / FPS);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (settings) return;
@@ -113,6 +120,21 @@ export function App({ client }: { client: Client }) {
         const ids = (group ? events.lists.find((l) => l.id === group)?.order : events.rootOrder) ?? [];
         setSelectedIds(ids);
         if (selected == null || !ids.includes(selected)) setSelected(ids[0] ?? null);
+      } else if (cmd.cmd === 'ui.split') {
+        if (!event) return;
+        const next = split(event, pos, periodUs);
+        void client.send({ cmd: 'event.update', id: event.id, ...next });
+      } else if (cmd.cmd === 'ui.fit') {
+        setFitKey((k) => k + 1);
+      } else if (cmd.cmd === 'ui.delete') {
+        if (!event) return;
+        if (selectedBlock != null) {
+          void client.send({ cmd: 'event.update', id: event.id, ...deleteBlock(event, selectedBlock) });
+        } else if (selectedIds.length) {
+          void client.send({ cmd: 'event.delete', ids: selectedIds });
+        }
+      } else if (cmd.cmd.startsWith('edit.')) {
+        void client.send(cmd);
       } else if (cmd.cmd.startsWith('mark.')) {
         sendMark(cmd);
       } else {
@@ -121,15 +143,10 @@ export function App({ client }: { client: Client }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings, hotkeys, events, sendMark]);
+  }, [client, status, selected, settings, hotkeys, events, sendMark, event, pos, periodUs, selectedBlock, selectedIds]);
 
-  const event = events?.events.find((e) => e.id === selected) ?? null;
-  const pos = status?.players.preview.posUs ?? 0;
-  // An event: its In with a little lead, wide enough for its Out. No event: the last 25 s up to
-  // Preview, so the live edge sits near the right instead of 25 s of empty future.
-  const view = event
-    ? { fromUs: event.inUs - 5_000_000, toUs: Math.max(event.inUs + 25_000_000, event.outUs + 3_000_000) }
-    : { fromUs: pos - 25_000_000, toUs: pos + 5_000_000 };
+  useEffect(() => setSelectedBlock(null), [selected]);
+
   const lastN = defaultSettings.lastNSeconds;
   const previewIndex = cameraIndex(status, status?.players.preview.angle);
   const target = previewIndex >= 0 ? { num: previewIndex + 1, color: cameraColor(previewIndex) } : undefined;
@@ -162,7 +179,21 @@ export function App({ client }: { client: Client }) {
         <div className="stage">
           <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
           <AngleRow status={status} client={client} hotkeys={hotkeys} native={native} />
-          <Timeline client={client} events={events} selectedId={selected} status={status} view={view} pin={lastMark} />
+          <Timeline
+            client={client}
+            events={events}
+            selectedId={selected}
+            selectedIds={selectedIds}
+            onSelect={(primary, ids) => {
+              setSelected(primary);
+              setSelectedIds(ids);
+            }}
+            selectedBlock={selectedBlock}
+            onSelectBlock={setSelectedBlock}
+            fitKey={fitKey}
+            status={status}
+            pin={lastMark}
+          />
           <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} target={target} onMark={sendMark} />
         </div>
         <SpeedLever status={status} client={client} hotkeys={hotkeys} />

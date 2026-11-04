@@ -36,6 +36,11 @@ export const HOTKEY_ROWS: Array<{ id: string; label: string }> = [
   { id: 'trim.in', label: 'Move replay start' },
   { id: 'trim.out', label: 'Move replay end' },
   { id: 'select.all', label: 'Select all in group' },
+  { id: 'edit.split', label: 'Split at playhead' },
+  { id: 'view.fit', label: 'Fit replay' },
+  { id: 'edit.delete', label: 'Delete' },
+  { id: 'edit.undo', label: 'Undo' },
+  { id: 'edit.redo', label: 'Redo' },
 ];
 
 export const defaultHotkeyKeys: Record<string, string> = {
@@ -64,6 +69,11 @@ export const defaultHotkeyKeys: Record<string, string> = {
   'trim.in': '[',
   'trim.out': ']',
   'select.all': 'Ctrl+A',
+  'edit.split': 'S',
+  'view.fit': 'F',
+  'edit.delete': 'Delete',
+  'edit.undo': 'Ctrl+Z',
+  'edit.redo': 'Ctrl+Y',
 };
 
 // Spec §6.2 defaults. Values the engine needs from the running show (input ids, lock state,
@@ -96,6 +106,12 @@ export const defaultHotkeys: Record<string, Command> = {
   '[': { cmd: 'event.trim', inFrames: 1 },
   ']': { cmd: 'event.trim', outFrames: 1 },
   'ctrl+a': { cmd: 'ui.selectAll' },
+  s: { cmd: 'ui.split' },
+  f: { cmd: 'ui.fit' },
+  delete: { cmd: 'ui.delete' },
+  'ctrl+z': { cmd: 'edit.undo' },
+  'ctrl+y': { cmd: 'edit.redo' },
+  'ctrl+shift+z': { cmd: 'edit.redo' },
 };
 
 function comboOf(key: string): string {
