@@ -60,6 +60,8 @@ void Mp4Writer::open() {
   if (!videoStream_ || !audioStream_) throw std::runtime_error("export: no stream");
   videoStream_->time_base = video_->time_base;
   audioStream_->time_base = audio_->time_base;
+  videoStream_->avg_frame_rate = {o_.rate.num, o_.rate.den};
+  videoStream_->r_frame_rate = {o_.rate.num, o_.rate.den};
   check(avcodec_parameters_from_context(videoStream_->codecpar, video_), "export: video parameters");
   check(avcodec_parameters_from_context(audioStream_->codecpar, audio_), "export: audio parameters");
   videoStream_->codecpar->codec_tag = 0;
@@ -90,15 +92,23 @@ void Mp4Writer::open() {
 void Mp4Writer::submit(bc::OutFrame frame) {
   if (error_ || finished_ || closed_) return;
   try {
-    if (frame.bgra && frame.bgra->width && frame.bgra->height) writeVideo(frame);
+    if (frame.bgra && frame.bgra->width && frame.bgra->height) {
+      writeVideo(*frame.bgra);
+    } else {
+      // No picture on air yet: the tick still counts, as a black frame.
+      bc::CpuImage black;
+      black.width = o_.w;
+      black.height = o_.h;
+      black.bgra.assign(static_cast<size_t>(o_.w) * o_.h * 4, 0);
+      writeVideo(black);
+    }
     if (frame.audio) writeAudio(frame);
   } catch (const std::exception& e) {
     fail(e.what());
   }
 }
 
-void Mp4Writer::writeVideo(const bc::OutFrame& frame) {
-  const auto& img = *frame.bgra;
+void Mp4Writer::writeVideo(const bc::CpuImage& img) {
   sws_ = sws_getCachedContext(sws_, static_cast<int>(img.width), static_cast<int>(img.height),
                               AV_PIX_FMT_BGRA, static_cast<int>(encW_), static_cast<int>(encH_),
                               AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr, nullptr, nullptr);
@@ -158,6 +168,11 @@ void Mp4Writer::finish() {
   try {
     send(video_, nullptr, videoStream_);
     send(audio_, nullptr, audioStream_);
+    // The sample table's last entry has no successor to time it, so state both durations.
+    videoStream_->duration = av_rescale_q(videoIndex_, AVRational{o_.rate.den, o_.rate.num},
+                                          videoStream_->time_base);
+    audioStream_->duration =
+        av_rescale_q(audioPts_, AVRational{1, 48'000}, audioStream_->time_base);
     check(av_write_trailer(fmt_), "export: trailer");
     close();
     std::error_code ec;

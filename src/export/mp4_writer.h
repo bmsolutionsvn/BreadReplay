@@ -50,7 +50,7 @@ class Mp4Writer final : public bc::Output {
   void open();
   void close();
   void fail(const std::string& why);
-  void writeVideo(const bc::OutFrame& frame);
+  void writeVideo(const bc::CpuImage& img);
   void writeAudio(const bc::OutFrame& frame);
   void send(AVCodecContext* ctx, AVFrame* frame, AVStream* stream);
   void drain(AVCodecContext* ctx, AVStream* stream);
