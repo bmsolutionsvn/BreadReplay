@@ -107,6 +107,17 @@ std::optional<FrameRef> InputStore::find(int64_t tsUs) const {
   return std::nullopt;
 }
 
+std::optional<FrameRef> InputStore::frameAt(size_t segment, size_t index) const {
+  std::shared_lock lock(m_);
+  if (segment >= segs_.size() || index >= segs_[segment].times.size()) return std::nullopt;
+  return FrameRef{segment, index, segs_[segment].times[index]};
+}
+
+size_t InputStore::frameCountIn(size_t segment) const {
+  std::shared_lock lock(m_);
+  return segment < segs_.size() ? segs_[segment].times.size() : 0;
+}
+
 bool InputStore::isGapAt(int64_t tsUs) const {
   const auto ref = find(tsUs);
   if (!ref) return true;

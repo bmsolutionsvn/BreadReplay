@@ -31,6 +31,8 @@ class InputStore {
   void append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
               std::span<const float> audio, bool keyframe = true);
   std::optional<FrameRef> find(int64_t tsUs) const;  // at or before, else nullopt
+  std::optional<FrameRef> frameAt(size_t segment, size_t index) const;  // by store position
+  size_t frameCountIn(size_t segment) const;
   std::optional<FrameRef> keyframeAtOrBefore(const FrameRef&) const;
   StoredCodec codecOf(const FrameRef&) const;
   bool isKeyframe(const FrameRef&) const;

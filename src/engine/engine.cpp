@@ -311,7 +311,7 @@ void Engine::buildOutputs() {
 void Engine::rebuildFrameSource() {
   std::map<std::string, const InputStore*> map;
   for (const auto& [id, store] : stores_) map[id] = store.get();
-  source_ = std::make_unique<FrameSource>(std::move(map));
+  source_ = std::make_unique<FrameSource>(std::move(map), deps_.gpu, deps_.pool);
 }
 
 void Engine::recordStart() {

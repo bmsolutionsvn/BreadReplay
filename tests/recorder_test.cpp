@@ -189,7 +189,7 @@ TEST_CASE("Recorder: an input smaller than the show from its first frame decodes
   CHECK(store.header().width == 160);
   CHECK(store.header().height == 96);
 
-  br::FrameSource source({{"cam1", &store}}, 1, 8);
+  br::FrameSource source({{"cam1", &store}}, nullptr, nullptr, 1, 8);
   const auto frame = source.get("cam1", base + 10 * 16683);
   REQUIRE(frame);
   CHECK(frame->w == 160);
