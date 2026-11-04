@@ -18,6 +18,10 @@
 #include "support/temp_dir.h"
 #include "support/test_media.h"
 
+#if BC_WITH_OMT
+#include "omthx/omthx.h"
+#endif
+
 namespace {
 struct Fixture {
   bc::test::TempDir dir;
@@ -211,6 +215,96 @@ TEST_CASE("Engine: output with nothing on air presents nothing and does not thro
   engine.stop();
   CHECK_FALSE(broken);
 }
+
+#if BC_WITH_OMT
+TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
+          BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Fixture f;
+  const std::string name = "BreadReplay OMT-HX " + std::to_string(GetCurrentProcessId());
+  omthx::Sender sender(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  omthx::VideoFormat format;
+  format.width = 640;
+  format.height = 360;
+  format.fpsN = 30;
+  format.fpsD = 1;
+  std::vector<uint8_t> bgra(static_cast<size_t>(640) * 360 * 4);
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    int64_t timestamp = 0;
+    uint8_t n = 40;
+    while (run) {
+      for (size_t i = 0; i < bgra.size(); i += 4) {
+        bgra[i] = static_cast<uint8_t>(n);
+        bgra[i + 1] = static_cast<uint8_t>(n + 40);
+        bgra[i + 2] = static_cast<uint8_t>(n + 80);
+        bgra[i + 3] = 255;
+      }
+      sender.sendVideo(format, bgra, false, timestamp);
+      timestamp += 333333;  // 30 fps in 100 ns units
+      n = static_cast<uint8_t>(40 + (n + 3) % 120);
+      std::this_thread::sleep_for(std::chrono::milliseconds(33));
+    }
+  });
+
+  br::Show show;
+  show.name = "HX engine";
+  show.settings.rate = bc::Rate{30, 1};
+  show.settings.outW = 640;
+  show.settings.outH = 360;
+  show.inputs.push_back(
+      {"cam0", "OMT", bc::InputConfig{"omt", {{"source", sender.address()}}}});
+  br::EngineDeps deps;
+  deps.gpu = f.gpu.get();
+  deps.pool = &f.pool;
+  deps.conv = &f.conv;
+  deps.clock = [] { return br::nowUs(); };
+  br::Engine engine(std::move(deps), show, f.dir.path / "show");
+  engine.start();
+  REQUIRE(f.waitFor(
+      [&] {
+        const auto* s = engine.store("cam0");
+        return s && s->frameCount() > 30 && s->newestTs() - s->segments().front().firstTs > 3'000'000;
+      },
+      30000));
+  const int64_t first = engine.store("cam0")->segments().front().firstTs;
+  const int64_t cueT = first + 1'500'000;
+
+  // Park Preview away from the live edge so it does not decode while Output reverses.
+  engine.playerFor("preview").cueAt(first + 500'000, "cam0");
+  engine.playerFor("preview").pause();
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+  auto& out = engine.playerFor("output");
+  out.cueAt(cueT, "cam0");
+  out.setDirection(-1);
+  out.play();
+  auto* op = engine.outputPlayer();
+  REQUIRE(op);
+  const uint64_t before = engine.frameSource() ? engine.frameSource()->decodes() : 0;
+  int black = 0;
+  for (int i = 0; i < 30; ++i) {
+    op->tickOnce();
+    const auto pic = op->lastPicture();
+    if (!pic) {
+      ++black;
+      continue;
+    }
+    auto rgb = f.conv.toBgra8(*pic, pic->width, pic->height);
+    const auto img = f.conv.readback(*rgb);
+    const size_t c = (static_cast<size_t>(img.height / 2) * img.width + img.width / 2) * 4;
+    if (img.bgra[c] + img.bgra[c + 1] + img.bgra[c + 2] < 12) ++black;
+  }
+  const uint64_t decoded = engine.frameSource() ? engine.frameSource()->decodes() - before : 0;
+  const auto stats = engine.recorderStats("cam0");
+  engine.stop();
+  run = false;
+  if (feeder.joinable()) feeder.join();
+
+  CHECK(black == 0);
+  CHECK(stats.encodeMsAvg == 0.0);
+  CHECK(decoded <= 60);  // one GOP's worth per seek
+}
+#endif
 
 TEST_CASE("Engine: statusJson reports nativeVideo") {
   Fixture f;

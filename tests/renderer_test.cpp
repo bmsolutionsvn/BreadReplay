@@ -6,6 +6,7 @@
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
+#include "gpu/upload.h"
 #include "io/uyvy.h"
 #include "play/renderer.h"
 
@@ -97,6 +98,27 @@ TEST_CASE("Renderer: a 4:3 input is letterboxed") {
   for (int c = 0; c < 3; ++c) CHECK(channel(left, c) <= 8);
   CHECK(channel(centre, 2) > 150);  // red channel of the coloured picture
   CHECK(channel(centre, 0) < 90);
+}
+
+TEST_CASE("Renderer: an NV12 picture renders through the GPU converter") {
+  Gpu g;
+  br::Renderer r(*g.dev, g.pool, g.conv, 1920, 1080);
+  const uint32_t w = 640, h = 360;
+  const std::vector<uint8_t> y(static_cast<size_t>(w) * h, 128);
+  const std::vector<uint8_t> uv(static_cast<size_t>(w) * h / 2, 128);
+  bc::TextureRef tex;
+  {
+    auto lock = g.dev->lock();
+    tex = bc::uploadNv12Planes(*g.dev, g.pool, y.data(), uv.data(), w, h);
+  }
+  br::DecodedFrame f;
+  f.w = w;
+  f.h = h;
+  f.picture.tex = tex;
+  f.picture.layout = bc::PixelLayout::NV12;
+  const auto out = r.render(f, br::ZoomRect{});
+  const auto px = readPixel(g.conv, out, 1920, 1080, 960, 540);
+  for (int c = 0; c < 3; ++c) CHECK(std::abs(channel(px, c) - 128) <= 6);
 }
 
 TEST_CASE("Renderer: mix at 0.5 averages") {

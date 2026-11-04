@@ -189,6 +189,12 @@ void Engine::Sink::onPacket(std::shared_ptr<const bc::MediaPacket> p) {
                    static_cast<uint32_t>(p->params->height), keyframe, std::move(au));
 }
 
+RecorderStats Engine::recorderStats(const std::string& id) {
+  std::lock_guard lock(m_);
+  const auto it = recorders_.find(id);
+  return it == recorders_.end() ? RecorderStats{} : it->second->stats();
+}
+
 Recorder* Engine::recorderFor(const std::string& id) {
   auto it = recorders_.find(id);
   return it == recorders_.end() ? nullptr : it->second.get();
@@ -621,7 +627,7 @@ void Engine::previewLoop() {
       // The playhead moves even without a picture; only the encode needs an encoder.
       const TickResult tr = previewPlayer_->tick();
       if (!source_ || !previewRenderer_) return;
-      const auto frame = source_->get(tr.inputId, tr.sourceUs);
+      const auto frame = source_->get(tr.inputId, tr.sourceUs, 1);  // Preview's own decoder lane
       if (!frame) return;
       const auto pic = previewRenderer_->render(*frame, tr.zoom);
       if (surfaces_ && surfaces_->wanted().contains("preview")) surfaces_->present("preview", *pic);

@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "gpu/image_io.h"
+#include "gpu/upload.h"
 #include "io/uyvy.h"
 #include "mix_linear.h"
 
@@ -24,10 +25,19 @@ Renderer::Renderer(bc::GpuDevice& gpu, bc::TexturePool& pool, bc::Converter& con
 
 bc::TextureRef Renderer::render(const DecodedFrame& f, ZoomRect z) {
   const uint32_t w = even(f.w), h = even(f.h);
-  const auto bgra = bc::uyvyToBgra(f.uyvy.data(), static_cast<int>(w), static_cast<int>(h),
-                                   static_cast<int>(w * 2), h >= 720);
-  const auto uploaded = conv_.uploadBgra8(bgra.data(), w, h, w * 4);
-  auto linear = conv_.toLinear(*uploaded, bc::PixelLayout::BGRA8, true);
+  bc::TextureRef linear;
+  if (f.picture.tex) {
+    // H.264/HEVC: the decoded NV12/P010 picture stays on the GPU end to end.
+    linear = conv_.toLinear(*f.picture.tex, f.picture.layout, f.picture.fullRange, f.picture.bt709);
+  } else {
+    // VMX: upload UYVY and let the GPU pick the matrix by height, as the CPU path did.
+    bc::TextureRef picture;
+    {
+      auto lock = gpu_.lock();
+      picture = bc::uploadUyvy(gpu_, pool_, f.uyvy.data(), w * 2, w, h);
+    }
+    linear = conv_.toLinear(*picture, bc::PixelLayout::UYVY, false);
+  }
 
   const float scale = std::clamp(z.scale, 1.0f, 4.0f);
   if (scale > 1.001f) {

@@ -92,6 +92,8 @@ class Engine {
   // For tests and the current-list highlight.
   OutputPlayer* outputPlayer() { return outputPlayer_.get(); }
   const InputStore* store(const std::string& id) const;
+  RecorderStats recorderStats(const std::string& id);
+  const FrameSource* frameSource() const { return source_.get(); }
 
  private:
   struct Sink final : bc::InputSink {

@@ -36,7 +36,9 @@ class FrameSource {
  public:
   FrameSource(std::map<std::string, const InputStore*> stores, bc::GpuDevice* gpu = nullptr,
               bc::TexturePool* pool = nullptr, int threads = 4, size_t cacheFrames = 32);
-  std::shared_ptr<const DecodedFrame> get(const std::string& inputId, int64_t tsUs);  // nullptr if none
+  // lane keeps two players (Output and Preview) from resetting each other's decoder state.
+  std::shared_ptr<const DecodedFrame> get(const std::string& inputId, int64_t tsUs,
+                                          size_t lane = 0);  // nullptr if none
   void prefetch(const std::string& inputId, int64_t fromUs, int64_t stepUs, int count);
   std::shared_ptr<const PreviewImage> preview(const std::string& inputId, int64_t tsUs);
   uint64_t diskReads() const { return diskReads_.load(); }
@@ -64,10 +66,10 @@ class FrameSource {
     std::shared_ptr<const PreviewImage> previewImage;
   };
 
-  void ensureDecoder(const std::string& id, uint32_t w, uint32_t h);
+  void ensureDecoder(const std::string& id, size_t lane, uint32_t w, uint32_t h);
   void ensureHx(Dec& d, StoredCodec codec, uint32_t w, uint32_t h);
   std::shared_ptr<const DecodedFrame> getCompressed(const std::string& id, const InputStore& store,
-                                                    const FrameRef& ref);
+                                                    const FrameRef& ref, size_t lane);
   void cachePicture(const std::string& id, const InputStore& store, bc::VideoFrameIn pic, uint32_t w,
                     uint32_t h);
   static size_t bytesOf(const DecodedFrame& f);
@@ -84,7 +86,7 @@ class FrameSource {
   std::map<Key, std::shared_ptr<const DecodedFrame>> cache_;
   std::list<Key> lru_;  // front = most recently used
   size_t cacheBytes_ = 0;
-  std::map<std::string, Dec> decoders_;
+  std::map<std::pair<std::string, size_t>, Dec> decoders_;
   std::atomic<uint64_t> diskReads_{0};
   std::atomic<uint64_t> decodes_{0};
 };

@@ -13,8 +13,8 @@ FrameSource::FrameSource(std::map<std::string, const InputStore*> stores, bc::Gp
   if (gpu_ && pool_) conv_ = std::make_unique<bc::Converter>(*gpu_, *pool_);
 }
 
-void FrameSource::ensureDecoder(const std::string& id, uint32_t w, uint32_t h) {
-  auto& d = decoders_[id];
+void FrameSource::ensureDecoder(const std::string& id, size_t lane, uint32_t w, uint32_t h) {
+  auto& d = decoders_[{id, lane}];
   if (!d.decoder || d.w != w || d.h != h) {
     d.decoder = std::make_unique<VmxDecoder>(w, h);
     d.w = w;
@@ -60,7 +60,8 @@ void FrameSource::evict() {
   }
 }
 
-std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId, int64_t tsUs) {
+std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId, int64_t tsUs,
+                                                     size_t lane) {
   std::lock_guard lock(m_);
   const auto sit = stores_.find(inputId);
   if (sit == stores_.end() || !sit->second) return nullptr;
@@ -73,13 +74,13 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
     touch(key);
     return it->second;
   }
-  if (store.codecOf(*ref) != StoredCodec::Vmx) return getCompressed(inputId, store, *ref);
+  if (store.codecOf(*ref) != StoredCodec::Vmx) return getCompressed(inputId, store, *ref, lane);
 
   const auto& header = store.header();
   // Decode at the size this frame was recorded at: an input can change size mid-show.
   const auto [w, h] = store.frameSize(*ref);
   if (!w || !h) return nullptr;
-  ensureDecoder(inputId, w, h);
+  ensureDecoder(inputId, lane, w, h);
   const auto bytes = store.readVideo(*ref, false);
   if (bytes.empty()) return nullptr;  // the writer has not reached this frame yet
 
@@ -88,7 +89,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
   frame->w = w;
   frame->h = h;
   frame->uyvy.resize(static_cast<size_t>(w) * h * 2);
-  decoders_[inputId].decoder->decodeUYVY(bytes, frame->uyvy.data(), static_cast<int>(w * 2));
+  decoders_[{inputId, lane}].decoder->decodeUYVY(bytes, frame->uyvy.data(), static_cast<int>(w * 2));
   frame->audio = store.readAudio(*ref);
   frame->channels = header.audioChannels;
   frame->sampleRate = header.sampleRate;
@@ -130,12 +131,12 @@ void FrameSource::cachePicture(const std::string& id, const InputStore& store, b
 }
 
 std::shared_ptr<const DecodedFrame> FrameSource::getCompressed(const std::string& id, const InputStore& store,
-                                                               const FrameRef& ref) {
+                                                               const FrameRef& ref, size_t lane) {
   if (!gpu_ || !pool_ || !conv_) return nullptr;  // no device: a compressed frame cannot be shown
   const auto [w, h] = store.frameSize(ref);
   if (!w || !h) return nullptr;
 
-  auto& d = decoders_[id];
+  auto& d = decoders_[{id, lane}];
   ensureHx(d, store.codecOf(ref), w, h);
   const auto k = store.keyframeAtOrBefore(ref);
   if (!k || k->segment != ref.segment) return nullptr;
@@ -182,7 +183,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   const auto [w, h] = store.frameSize(*ref);
   if (!w || !h) return nullptr;
   if (store.codecOf(*ref) == StoredCodec::Vmx) {
-    ensureDecoder(inputId, w, h);
+    ensureDecoder(inputId, 2, w, h);
     const auto prefix = store.readVideo(*ref, true);
     if (prefix.empty()) return nullptr;
     const Size ps = VmxDecoder::previewSize(w, h);
@@ -191,7 +192,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
     image->w = ps.w;
     image->h = ps.h;
     image->bgra.resize(static_cast<size_t>(ps.w) * ps.h * 4);
-    decoders_[inputId].decoder->decodePreviewBGRA(prefix, image->bgra.data(), static_cast<int>(ps.w * 4));
+    decoders_[{inputId, 2}].decoder->decodePreviewBGRA(prefix, image->bgra.data(), static_cast<int>(ps.w * 4));
     ++diskReads_;
     return image;
   }
@@ -199,7 +200,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   if (!gpu_ || !pool_ || !conv_) return nullptr;
   const auto key = store.keyframeAtOrBefore(*ref);
   if (!key || key->segment != ref->segment) return nullptr;
-  auto& d = decoders_[inputId];
+  auto& d = decoders_[{inputId, 2}];
   const StoredCodec codec = store.codecOf(*key);
   if (!d.preview || d.previewCodec != codec || d.pw != w || d.ph != h) {
     d.preview = std::make_unique<bc::GpuDecoder>(*gpu_, *pool_,
