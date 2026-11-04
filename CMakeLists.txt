@@ -46,6 +46,8 @@ add_library(br_core STATIC
   src/events/edit_history.cpp
   src/events/show_file.cpp
   src/export/export_rules.cpp
+  src/export/export_encoder.cpp
+  src/export/mp4_writer.cpp
   src/play/player.cpp
   src/play/frame_source.cpp
   src/play/renderer.cpp
@@ -88,6 +90,7 @@ add_executable(br_tests
   tests/edit_history_test.cpp
   tests/show_file_test.cpp
   tests/export_rules_test.cpp
+  tests/mp4_writer_test.cpp
   tests/pass_test.cpp
   tests/player_test.cpp
   tests/frame_source_test.cpp
