@@ -29,8 +29,14 @@ class InputStore {
  public:
   InputStore(std::filesystem::path dir, SegmentHeader proto);  // loads + recovers existing segments
   void append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-              std::span<const float> audio);
+              std::span<const float> audio, bool keyframe = true);
   std::optional<FrameRef> find(int64_t tsUs) const;  // at or before, else nullopt
+  std::optional<FrameRef> frameAt(size_t segment, size_t index) const;  // by store position
+  size_t frameCountIn(size_t segment) const;
+  std::optional<FrameRef> keyframeAtOrBefore(const FrameRef&) const;
+  StoredCodec codecOf(const FrameRef&) const;
+  bool isKeyframe(const FrameRef&) const;
+  size_t droppedBeforeKeyframe() const;
   bool isGapAt(int64_t tsUs) const;                  // no frame within 2 periods before tsUs
   std::vector<uint8_t> readVideo(const FrameRef&, bool previewOnly) const;
   // The size the frame was recorded at (its segment's header); {0, 0} for a stale ref.
@@ -40,7 +46,8 @@ class InputStore {
   bool removeSegment(const std::filesystem::path& base);  // refuses the open (writing) segment
   // A recorder's frame size changed: the open segment is closed, the next append starts a new
   // one with this header.
-  void changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate);
+  void changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate,
+                         StoredCodec codec = StoredCodec::Vmx);
   std::vector<std::pair<int64_t, int64_t>> coverage() const;  // ranges split at gaps > 2 periods
   int64_t newestTs() const;
   int64_t bytesOnDisk() const;
@@ -67,6 +74,7 @@ class InputStore {
   // ponytail: fixed floor; track each input's measured cadence if 10-20 fps sources appear.
   int64_t gapUs() const { return std::max<int64_t>(2 * periodUs_, 100'000); }
   bool forceNewSegment_ = false;
+  size_t droppedBeforeKeyframe_ = 0;
 };
 
 }  // namespace br

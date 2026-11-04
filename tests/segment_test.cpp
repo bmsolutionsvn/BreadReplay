@@ -1,8 +1,13 @@
 #include <doctest/doctest.h>
 
+#include <cstring>
+#include <fstream>
 #include <numeric>
 #include <thread>
 
+#include "core/vmx_codec.h"
+#include "play/frame_source.h"
+#include "store/input_store.h"
 #include "store/segment.h"
 #include "support/temp_dir.h"
 
@@ -26,6 +31,65 @@ std::vector<float> makeAudio(int i, size_t frames = 8) {
   std::vector<float> a(frames * 2);
   for (size_t k = 0; k < a.size(); ++k) a[k] = static_cast<float>(i) + static_cast<float>(k) * 0.01f;
   return a;
+}
+
+void put16(std::vector<uint8_t>& o, uint16_t v) {
+  o.insert(o.end(), reinterpret_cast<const uint8_t*>(&v), reinterpret_cast<const uint8_t*>(&v) + 2);
+}
+void put32(std::vector<uint8_t>& o, uint32_t v) {
+  o.insert(o.end(), reinterpret_cast<const uint8_t*>(&v), reinterpret_cast<const uint8_t*>(&v) + 4);
+}
+void put64(std::vector<uint8_t>& o, int64_t v) {
+  o.insert(o.end(), reinterpret_cast<const uint8_t*>(&v), reinterpret_cast<const uint8_t*>(&v) + 8);
+}
+
+// Byte fixture in the v1 layout: version 1, no codec field, reserved = 0. The frames are real VMX
+// pictures, so the same bytes still decode after the upgrade.
+std::vector<std::vector<uint8_t>> writeV1Segment(const std::filesystem::path& base, int frames) {
+  std::vector<uint8_t> idx;
+  put32(idx, 1);
+  put32(idx, 4);
+  idx.insert(idx.end(), {'c', 'a', 'm', '1'});
+  put32(idx, 320);
+  put32(idx, 180);
+  put32(idx, 60);
+  put32(idx, 1);
+  put16(idx, 2);
+  put32(idx, 48000);
+
+  br::VmxEncoder enc(320, 180, br::VmxQuality::SQ);
+  std::vector<std::vector<uint8_t>> encoded;
+  std::vector<uint8_t> ess;
+  for (int i = 0; i < frames; ++i) {
+    const int64_t ts = 1'000'000 + i * 16683;
+    std::vector<uint8_t> uyvy(static_cast<size_t>(320) * 180 * 2, static_cast<uint8_t>(40 + i * 20));
+    bc::CpuVideoFrame f;
+    f.data = uyvy.data();
+    f.stride = 320 * 2;
+    f.width = 320;
+    f.height = 180;
+    f.format = bc::CpuPixel::UYVY;
+    const auto frame = enc.encode(f);
+    const auto& video = frame.bytes;
+    encoded.push_back(video);
+    const int64_t offset = static_cast<int64_t>(ess.size());
+    put64(idx, ts);
+    put64(idx, offset);
+    put32(idx, static_cast<uint32_t>(video.size()));
+    put32(idx, frame.previewLen);
+    put32(idx, 0);
+    put32(idx, 0);  // reserved
+
+    ess.insert(ess.end(), {'B', 'R', 'F', '1'});
+    put64(ess, ts);
+    put32(ess, static_cast<uint32_t>(video.size()));
+    put32(ess, 0);
+    put32(ess, frame.previewLen);
+    ess.insert(ess.end(), video.begin(), video.end());
+  }
+  std::ofstream(base.string() + ".vmxi", std::ios::binary).write(reinterpret_cast<const char*>(idx.data()), static_cast<std::streamsize>(idx.size()));
+  std::ofstream(base.string() + ".vmxs", std::ios::binary).write(reinterpret_cast<const char*>(ess.data()), static_cast<std::streamsize>(ess.size()));
+  return encoded;
 }
 }  // namespace
 
@@ -140,4 +204,85 @@ TEST_CASE("Segment: audio stays with its frame") {
   REQUIRE(r.has_value());
   r->refresh();
   CHECK(r->readAudio(5) == makeAudio(5));
+}
+
+TEST_CASE("Segment: v2 HEVC round-trips codec, keyframe flags and bytes") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "seg";
+  auto h = headerFor();
+  h.codec = br::StoredCodec::Hevc;
+  {
+    br::SegmentWriter w(base, h);
+    for (int i = 0; i < 5; ++i) {
+      w.append(2'000'000 + i * 16683, makeVideo(i), 0, makeAudio(i), i == 0 || i == 3);
+    }
+    w.close();
+  }
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  r->refresh();
+  CHECK(r->header().version == 2);
+  CHECK(r->header().codec == br::StoredCodec::Hevc);
+  REQUIRE(r->records().size() == 5);
+  for (int i = 0; i < 5; ++i) {
+    CHECK(r->records()[static_cast<size_t>(i)].flags == ((i == 0 || i == 3) ? 1u : 0u));
+    CHECK(r->readVideo(static_cast<size_t>(i), false) == makeVideo(i));
+  }
+}
+
+TEST_CASE("Segment: a v1 segment reads as VMX with every frame a keyframe") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "v1";
+  const auto encoded = writeV1Segment(base, 3);
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  r->refresh();
+  CHECK(r->header().version == 1);
+  CHECK(r->header().codec == br::StoredCodec::Vmx);
+  REQUIRE(r->records().size() == 3);
+  for (int i = 0; i < 3; ++i) {
+    CHECK(r->records()[static_cast<size_t>(i)].flags == 0u);
+    CHECK(r->readVideo(static_cast<size_t>(i), false) == encoded[static_cast<size_t>(i)]);
+  }
+
+  br::SegmentHeader proto;
+  proto.inputId = "cam1";
+  proto.width = 320;
+  proto.height = 180;
+  proto.rate = bc::Rate{60, 1};
+  br::InputStore store(dir.path, proto);
+  REQUIRE(store.frameCount() == 3);
+  auto ref = store.find(1'000'000 + 16'683);
+  REQUIRE(ref.has_value());
+  CHECK(store.codecOf(*ref) == br::StoredCodec::Vmx);
+  CHECK(store.isKeyframe(*ref));
+
+  // It still plays: the v1 frames go through the VMX path as before the upgrade.
+  br::FrameSource source({{"cam1", &store}});
+  const auto frame = source.get("cam1", 1'000'000 + 16'683);
+  REQUIRE(frame);
+  CHECK(frame->tsUs == 1'000'000 + 16'683);
+  CHECK(frame->uyvy.size() == 320u * 180u * 2u);
+}
+
+TEST_CASE("Segment: v2 recovery drops a record whose bytes are missing") {
+  bc::test::TempDir dir;
+  const auto base = dir.path / "seg";
+  auto h = headerFor();
+  h.codec = br::StoredCodec::H264;
+  {
+    br::SegmentWriter w(base, h);
+    for (int i = 0; i < 10; ++i) w.append(i * 16683, makeVideo(i, 100), 0, makeAudio(i), i == 0);
+    w.close();
+  }
+  const auto essence = std::filesystem::path(base.string() + ".vmxs");
+  std::filesystem::resize_file(essence, std::filesystem::file_size(essence) - 10);
+  br::recoverSegment(base);
+  auto r = br::SegmentReader::open(base);
+  REQUIRE(r.has_value());
+  r->refresh();
+  REQUIRE(r->records().size() == 9);
+  CHECK(r->records()[0].flags == 1u);
+  CHECK(r->records()[8].flags == 0u);
+  CHECK(r->readVideo(8, false) == makeVideo(8, 100));
 }

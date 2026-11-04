@@ -92,6 +92,8 @@ class Engine {
   // For tests and the current-list highlight.
   OutputPlayer* outputPlayer() { return outputPlayer_.get(); }
   const InputStore* store(const std::string& id) const;
+  RecorderStats recorderStats(const std::string& id);
+  const FrameSource* frameSource() const { return source_.get(); }
 
  private:
   struct Sink final : bc::InputSink {
@@ -99,13 +101,20 @@ class Engine {
     void onVideo(bc::VideoFrameIn) override {}
     void onAudio(bc::AudioBlock a) override;
     void onState(bc::SignalState s, std::optional<bc::ErrorInfo> err) override;
-    bool wantsCpuVideo() const override { return true; }
+    // A compressed input switches to packets/access units when it arrives as H.264/HEVC; it then
+    // needs no decoded picture at all.
+    bool wantsCpuVideo() const override { return !coded_.load(); }
     bool wantsGpuVideo() const override { return false; }
     bool wantsCodedVmx() const override { return true; }
+    bool wantsCodedHx() const override { return true; }
+    bool wantsPackets() const override { return true; }
+    bool wantsDecodedAudio() const override { return true; }
     void onCpuVideo(const bc::CpuVideoFrame& f) override;
     void onCodedVideo(const bc::CodedVideoFrame& f) override;
+    void onPacket(std::shared_ptr<const bc::MediaPacket> p) override;
     Engine& engine;
     std::string inputId;
+    std::atomic<bool> coded_{false};  // the packet path owns this input's video
   };
 
   void buildInputs();
