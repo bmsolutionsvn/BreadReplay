@@ -58,9 +58,14 @@ class EventStore {
   void recordAngle(int id, int64_t t, const std::string& inputId);
   void recordSpeed(int id, int64_t t, double s);
   void recordZoom(int id, int64_t t, ZoomRect r);
+  const std::vector<int>& orderOf(const std::string& listId) const;
+  std::vector<int> displayOrder() const;
   std::string newList(const std::string& name);
+  bool renameList(const std::string& id, const std::string& name);
+  void deleteList(const std::string& id);
   void selectList(const std::string& id);
   void reorder(const std::string& listId, std::vector<int> order);
+  void moveEvents(const std::vector<int>& ids, const std::string& toList, std::optional<int> beforeId);
   const Event* find(int id) const;
   Event* find(int id);
   const std::vector<EventList>& lists() const { return lists_; }
@@ -80,9 +85,9 @@ class EventStore {
  private:
   Event& makeEvent(int64_t in, int64_t out, const std::string& angle);
   void resetPoints(Event& e, const std::string& angle);
-  void ensureList();
 
   std::vector<Event> events_;
+  std::vector<int> rootOrder_;
   std::vector<EventList> lists_;
   std::string currentList_;
   int nextId_ = 1;

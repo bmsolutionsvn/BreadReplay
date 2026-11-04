@@ -25,18 +25,7 @@ void OutputPlayer::setOutputs(std::vector<std::unique_ptr<bc::Output>> outs) {
 
 void OutputPlayer::playHighlight(const std::string& listId) {
   highlight_.clear();
-  std::string id = listId;
-  if (id.empty()) id = events_.currentList();
-  std::vector<int> order;
-  for (const auto& l : events_.lists()) {
-    if (l.id == id) order = l.order;
-  }
-  if (order.empty()) {
-    for (const auto& e : events_.events()) {
-      if (e.listId == id) order.push_back(e.id);
-    }
-  }
-  for (int eventId : order) {
+  for (int eventId : events_.orderOf(listId)) {
     if (events_.find(eventId)) highlight_.push_back(eventId);
   }
   if (highlight_.empty()) return;
