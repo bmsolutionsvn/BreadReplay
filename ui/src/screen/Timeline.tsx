@@ -4,6 +4,7 @@ import type { Client } from '../api/client';
 import type { Event, Status } from '../api/types';
 import { useContextMenu } from '../ContextMenu';
 import { formatClock } from '../format';
+import { cameraColor, cameraIndex, type MarkStamp } from './cameraColors';
 
 export interface TimeRange {
   fromUs: number;
@@ -27,13 +28,14 @@ type Props = {
   status?: Status | null;
   view?: TimeRange;
   width?: number;
+  pin?: MarkStamp | null;
 };
 
 type Drag = { index: number; startX: number; startT: number; tUs: number };
 
 // Whole-game bar over a zoomed (≈30 s) track with the event's angle/speed blocks and one
 // recording lane per input (spec §7).
-export function Timeline({ client, events, selectedId, status, view, width = 1000 }: Props) {
+export function Timeline({ client, events, selectedId, status, view, width = 1000, pin = null }: Props) {
   const menu = useContextMenu();
   const event = events?.events.find((e) => e.id === selectedId) ?? null;
   const range = view ?? gameRange(event, events?.events ?? [], status);
@@ -78,7 +80,10 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
 
   const game = gameRange(null, events?.events ?? [], status);
   const speeds = event?.speeds ?? [];
-  const playhead = status?.players.preview.posUs;
+  const preview = status?.players.preview;
+  const playhead = preview?.posUs;
+  const pgm = status?.players.output?.eventId != null ? status.players.output.posUs : null;
+  const inView = (tUs: number | null | undefined): tUs is number => tUs != null && tUs >= range.fromUs && tUs <= range.toUs;
 
   return (
     <section className="tl" aria-label="Timeline">
@@ -120,9 +125,9 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
               {angles.map((a, i) => (
                 <span
                   key={i}
-                  className={`seg c${i + 1}${speeds[i] && speeds[i].speed < 0.99 ? ' slow' : ''}`}
+                  className={`seg${speeds[i] && speeds[i].speed < 0.99 ? ' slow' : ''}`}
                   data-testid={`angle-block-${i}`}
-                  style={{ left: pct(at(i)), width: widthPct(at(i), blockEnd(i)) }}
+                  style={{ left: pct(at(i)), width: widthPct(at(i), blockEnd(i)), background: cameraColor(cameraIndex(status, a.inputId)) }}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     setDrag({ index: i, startX: e.clientX, startT: angles[i].tUs, tUs: angles[i].tUs });
@@ -131,7 +136,8 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
                   {inputName(status, a.inputId)}
                 </span>
               ))}
-              {playhead != null && <span className="ph" style={{ left: pct(playhead) }} />}
+              {inView(playhead) && <span className="ph pvw" style={{ left: pct(playhead) }} />}
+              {inView(pgm) && <span className="ph pgm" style={{ left: pct(pgm) }} />}
             </>
           )}
         </div>
@@ -150,21 +156,30 @@ export function Timeline({ client, events, selectedId, status, view, width = 100
         </div>
       )}
 
-      {(status?.inputs ?? []).map((input) => (
+      {(status?.inputs ?? []).map((input, index) => {
+        const colour = cameraColor(index);
+        const target = preview?.angle === input.id;
+        return (
         <div className="tl-row cams" key={input.id}>
           <span className="tl-lab" title={`${input.name}: green = recorded, red = signal was missing`}>
             {input.name}
           </span>
-          <div className="tl-lane lane">
+          <div className={`tl-lane lane${target ? ' armed' : ''}`} style={target ? { boxShadow: `inset 0 0 0 2px ${colour}` } : undefined}>
             {input.coverage.map(([from, to], i) => (
               <span key={`c${i}`} className="rec" style={{ left: pct(from), width: widthPct(from, to) }} />
             ))}
             {gaps(input.coverage, { fromUs: range.fromUs, toUs: Math.min(range.toUs, recordedTo) }).map(([from, to], i) => (
               <span key={`g${i}`} className="gap" style={{ left: pct(from), width: widthPct(from, to) }} />
             ))}
+            {pin && pin.inputId === input.id && (
+              <span className="pin" style={{ left: pct(pin.tUs), background: colour }} />
+            )}
+            {inView(playhead) && <span className="ph pvw" style={{ left: pct(playhead) }} />}
+            {inView(pgm) && <span className="ph pgm" style={{ left: pct(pgm) }} />}
           </div>
         </div>
-      ))}
+        );
+      })}
     </section>
   );
 }

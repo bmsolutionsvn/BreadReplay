@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import type { Client } from './api/client';
+import type { Client, Command } from './api/client';
 import { ContextMenuHost } from './ContextMenu';
 import { hotkeyMap, keyToCommand } from './hotkeys';
 import { Settings, defaultSettings } from './dialogs/Settings';
 import { AngleRow } from './screen/AngleRow';
+import { cameraColor, cameraIndex, type MarkStamp } from './screen/cameraColors';
 import { ControlsBar } from './screen/ControlsBar';
 import { EventList } from './screen/EventList';
 import { Monitors } from './screen/Monitors';
@@ -26,10 +27,31 @@ export function App({ client }: { client: Client }) {
   const haveStatus = status !== null;
   const [selected, setSelected] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [stamp, setStamp] = useState<MarkStamp | null>(null);
+  const [lastMark, setLastMark] = useState<MarkStamp | null>(null);
+  const stampTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
   const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
   const hotkeys = status?.hotkeys ?? savedHotkeys;
+
+  useEffect(() => () => clearTimeout(stampTimer.current), []);
+
+  // Every Mark (buttons, keys, Preview menu) sets the stamp from the engine's reply.
+  const sendMark = useCallback((cmd: Command) => {
+    void client.send(cmd).then((res) => {
+      if (!res.ok) return;
+      const mark: MarkStamp = {
+        edge: res.edge === 'in' ? 'in' : 'out',
+        inputId: String(res.inputId ?? ''),
+        tUs: Number(res.tUs ?? 0),
+      };
+      setStamp(mark);
+      setLastMark(mark);
+      clearTimeout(stampTimer.current);
+      stampTimer.current = setTimeout(() => setStamp(null), 1500);
+    });
+  }, [client]);
 
   useEffect(() => {
     const offStatus = client.onStatus(setStatus);
@@ -91,13 +113,15 @@ export function App({ client }: { client: Client }) {
         const ids = (group ? events.lists.find((l) => l.id === group)?.order : events.rootOrder) ?? [];
         setSelectedIds(ids);
         if (selected == null || !ids.includes(selected)) setSelected(ids[0] ?? null);
+      } else if (cmd.cmd.startsWith('mark.')) {
+        sendMark(cmd);
       } else {
         void client.send(cmd);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings, hotkeys, events]);
+  }, [client, status, selected, settings, hotkeys, events, sendMark]);
 
   const event = events?.events.find((e) => e.id === selected) ?? null;
   const pos = status?.players.preview.posUs ?? 0;
@@ -107,6 +131,8 @@ export function App({ client }: { client: Client }) {
     ? { fromUs: event.inUs - 5_000_000, toUs: Math.max(event.inUs + 25_000_000, event.outUs + 3_000_000) }
     : { fromUs: pos - 25_000_000, toUs: pos + 5_000_000 };
   const lastN = defaultSettings.lastNSeconds;
+  const previewIndex = cameraIndex(status, status?.players.preview.angle);
+  const target = previewIndex >= 0 ? { num: previewIndex + 1, color: cameraColor(previewIndex) } : undefined;
 
   return (
     <ContextMenuHost>
@@ -134,10 +160,10 @@ export function App({ client }: { client: Client }) {
 
       <div className="main">
         <div className="stage">
-          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} />
+          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
           <AngleRow status={status} client={client} hotkeys={hotkeys} native={native} />
-          <Timeline client={client} events={events} selectedId={selected} status={status} view={view} />
-          <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} />
+          <Timeline client={client} events={events} selectedId={selected} status={status} view={view} pin={lastMark} />
+          <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} target={target} onMark={sendMark} />
         </div>
         <SpeedLever status={status} client={client} hotkeys={hotkeys} />
         <EventList
