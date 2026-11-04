@@ -9,6 +9,7 @@ import { ControlsBar } from './screen/ControlsBar';
 import { EventList } from './screen/EventList';
 import { Monitors } from './screen/Monitors';
 import { nativeVideoRequested, startNativeVideo } from './screen/nativeVideoRegistry';
+import { groupOf } from './screen/selection';
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
@@ -24,6 +25,7 @@ export function App({ client }: { client: Client }) {
   const native = nativeVideoRequested() && status?.nativeVideo === true;
   const haveStatus = status !== null;
   const [selected, setSelected] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
   const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
@@ -58,9 +60,15 @@ export function App({ client }: { client: Client }) {
     const newest = Math.max(...events.events.map((e) => e.id));
     const isNew = newestSeen.current > 0 && newest > newestSeen.current;
     newestSeen.current = Math.max(newestSeen.current, newest);
-    if (isNew) return setSelected(newest);
+    if (isNew) {
+      setSelected(newest);
+      setSelectedIds([newest]);
+      return;
+    }
     if (selected != null && events.events.some((e) => e.id === selected)) return;
-    setSelected(events.events[events.events.length - 1].id);
+    const last = events.events[events.events.length - 1].id;
+    setSelected(last);
+    setSelectedIds([last]);
   }, [events, selected]);
 
   useEffect(() => {
@@ -75,12 +83,21 @@ export function App({ client }: { client: Client }) {
       });
       if (!cmd) return;
       e.preventDefault();
-      if (cmd.cmd === 'ui.zoomMode') setZoomMode((z) => !z);
-      else void client.send(cmd);
+      if (cmd.cmd === 'ui.zoomMode') {
+        setZoomMode((z) => !z);
+      } else if (cmd.cmd === 'ui.selectAll') {
+        if (!events) return;
+        const group = selected != null ? groupOf(events, selected) : events.currentList;
+        const ids = (group ? events.lists.find((l) => l.id === group)?.order : events.rootOrder) ?? [];
+        setSelectedIds(ids);
+        if (selected == null || !ids.includes(selected)) setSelected(ids[0] ?? null);
+      } else {
+        void client.send(cmd);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings, hotkeys]);
+  }, [client, status, selected, settings, hotkeys, events]);
 
   const event = events?.events.find((e) => e.id === selected) ?? null;
   const pos = status?.players.preview.posUs ?? 0;
@@ -123,7 +140,17 @@ export function App({ client }: { client: Client }) {
           <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} />
         </div>
         <SpeedLever status={status} client={client} hotkeys={hotkeys} />
-        <EventList client={client} events={events} selectedId={selected} onSelect={setSelected} hotkeys={hotkeys} />
+        <EventList
+          client={client}
+          events={events}
+          selectedId={selected}
+          selectedIds={selectedIds}
+          onSelect={(primary, ids) => {
+            setSelected(primary);
+            setSelectedIds(ids);
+          }}
+          hotkeys={hotkeys}
+        />
       </div>
 
       <StatusBar status={status} />

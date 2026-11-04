@@ -13,6 +13,7 @@ const events: EventStore = {
   preRollUs: 0,
   postRollUs: 0,
   defaultSpeed: 0.5,
+  rootOrder: [],
   lists: [{ id: 'g1', name: 'Game 1', order: [1] }],
   events: [
     {

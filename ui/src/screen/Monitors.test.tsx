@@ -34,7 +34,7 @@ test('Monitors: an idle Output shows no timecode, no countdown and an empty bar'
 test('Monitors: the progress bar follows the on-air event at its speed points', () => {
   const ev = { id: 3, listId: 'g1', name: '', tags: [], angleNotes: {}, inUs: 0, outUs: 10_000_000, angles: [], speeds: [{ tUs: 0, speed: 0.5 }], zooms: [] };
   expect(playSeconds(ev, 1)).toBeCloseTo(20);
-  const events = { version: 1, nextId: 4, nextListId: 2, currentList: 'g1', preRollUs: 0, postRollUs: 0, defaultSpeed: 0.5, lists: [], events: [ev] };
+  const events = { version: 1, nextId: 4, nextListId: 2, currentList: 'g1', preRollUs: 0, postRollUs: 0, defaultSpeed: 0.5, rootOrder: [], lists: [], events: [ev] };
   const mid: Status = { ...status, players: { ...status.players, output: { ...status.players.output, remainingS: 5 } } };
   render(<Monitors status={mid} fps={59.94} events={events} />);
   expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');

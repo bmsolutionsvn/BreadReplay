@@ -35,6 +35,7 @@ export const HOTKEY_ROWS: Array<{ id: string; label: string }> = [
   { id: 'zoom', label: 'Zoom mode' },
   { id: 'trim.in', label: 'Move replay start' },
   { id: 'trim.out', label: 'Move replay end' },
+  { id: 'select.all', label: 'Select all in group' },
 ];
 
 export const defaultHotkeyKeys: Record<string, string> = {
@@ -62,6 +63,7 @@ export const defaultHotkeyKeys: Record<string, string> = {
   zoom: 'Z',
   'trim.in': '[',
   'trim.out': ']',
+  'select.all': 'Ctrl+A',
 };
 
 // Spec §6.2 defaults. Values the engine needs from the running show (input ids, lock state,
@@ -93,6 +95,7 @@ export const defaultHotkeys: Record<string, Command> = {
   z: { cmd: 'ui.zoomMode' }, // the screen consumes this; the engine has no zoom-mode command
   '[': { cmd: 'event.trim', inFrames: 1 },
   ']': { cmd: 'event.trim', outFrames: 1 },
+  'ctrl+a': { cmd: 'ui.selectAll' },
 };
 
 function comboOf(key: string): string {
@@ -122,16 +125,18 @@ export function hotkeyMap(saved: Record<string, string> = {}): Record<string, Co
 
 function combo(e: KeyboardEvent): string {
   const key = e.key === ' ' ? 'space' : e.key.toLowerCase().replace(/^arrow/, '');
-  return e.shiftKey ? `shift+${key}` : key;
+  return `${e.ctrlKey ? 'ctrl+' : ''}${e.shiftKey ? 'shift+' : ''}${key}`;
 }
 
-function isTyping(target: EventTarget | null): boolean {
+function isTyping(target: EventTarget | null, key: string): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName);
+  if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return true;
+  // A focused list row is a button: it still owns Space/Enter (mark/take stay on the keys).
+  return target.tagName === 'BUTTON' && (key === ' ' || key.toLowerCase() === 'enter');
 }
 
 export function keyToCommand(e: KeyboardEvent, map: Record<string, Command> = defaultHotkeys, ctx: HotkeyContext = {}): Command | null {
-  if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target)) return null;
+  if (e.altKey || e.metaKey || isTyping(e.target, e.key)) return null;
   const found = map[combo(e)];
   if (!found) return null;
   const cmd: Command = { ...found };
