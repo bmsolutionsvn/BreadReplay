@@ -53,13 +53,20 @@ InputStore::InputStore(std::filesystem::path dir, SegmentHeader proto)
 }
 
 void InputStore::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-                        std::span<const float> audio) {
+                        std::span<const float> audio, bool keyframe) {
   std::unique_lock lock(m_);
   const int64_t key = minuteKey(tsUs);
   if (!segs_.empty() && segs_.back().writer && !segs_.back().times.empty() &&
       minuteKey(segs_.back().times.back()) != key) {
     segs_.back().writer->close();
     segs_.back().writer.reset();
+  }
+  const bool continuing = !forceNewSegment_ && !segs_.empty() && !segs_.back().times.empty() &&
+                          minuteKey(segs_.back().times.back()) == key &&
+                          (segs_.back().writer || !segs_.back().reader->records().empty());
+  if (!keyframe && !continuing) {
+    ++droppedBeforeKeyframe_;
+    return;
   }
   if (segs_.empty() || !segs_.back().writer) {
     const bool canAppend = !forceNewSegment_ && !segs_.empty() && !segs_.back().times.empty() &&
@@ -81,7 +88,7 @@ void InputStore::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t p
     }
   }
   Seg& s = segs_.back();
-  s.writer->append(tsUs, video, previewLen, audio);
+  s.writer->append(tsUs, video, previewLen, audio, keyframe);
   s.times.push_back(tsUs);
   s.bytes += static_cast<int64_t>(24) + static_cast<int64_t>(audio.size() * sizeof(float)) +
              static_cast<int64_t>(video.size());
@@ -158,7 +165,7 @@ bool InputStore::removeSegment(const std::filesystem::path& base) {
   return false;
 }
 
-void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate) {
+void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate, StoredCodec codec) {
   std::unique_lock lock(m_);
   if (!segs_.empty() && segs_.back().writer) {
     segs_.back().writer->close();
@@ -167,6 +174,7 @@ void InputStore::changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate) {
   proto_.width = w;
   proto_.height = h;
   proto_.rate = rate;
+  proto_.codec = codec;
   forceNewSegment_ = true;
   periodUs_ = rate.fps() > 0 ? static_cast<int64_t>(1'000'000.0 / rate.fps() + 0.5) : 33'333;
 }
@@ -204,6 +212,48 @@ size_t InputStore::frameCount() const {
   size_t n = 0;
   for (const auto& s : segs_) n += s.times.size();
   return n;
+}
+
+size_t InputStore::droppedBeforeKeyframe() const {
+  std::shared_lock lock(m_);
+  return droppedBeforeKeyframe_;
+}
+
+StoredCodec InputStore::codecOf(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return StoredCodec::Vmx;
+  return segs_[ref.segment].reader->header().codec;
+}
+
+bool InputStore::isKeyframe(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return false;
+  auto* r = const_cast<SegmentReader*>(segs_[ref.segment].reader.get());
+  r->refresh();
+  const auto& recs = r->records();
+  if (ref.index >= recs.size()) return false;
+  if (r->header().version < 2) return true;  // v1 had no flag: every frame was a picture
+  return (recs[ref.index].flags & FrameRecord::kKeyframe) != 0;
+}
+
+std::optional<FrameRef> InputStore::keyframeAtOrBefore(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (segs_.empty()) return std::nullopt;
+  const size_t start = std::min(ref.segment, segs_.size() - 1);
+  for (size_t si = start + 1; si-- > 0;) {
+    auto& s = segs_[si];
+    if (s.times.empty() || !s.reader) continue;
+    auto* r = const_cast<SegmentReader*>(s.reader.get());
+    r->refresh();
+    const auto& recs = r->records();
+    const bool allKey = r->header().version < 2;
+    auto it = std::upper_bound(s.times.begin(), s.times.end(), ref.tsUs);
+    for (size_t n = static_cast<size_t>(std::distance(s.times.begin(), it)); n-- > 0;) {
+      if (n >= recs.size()) continue;  // record not in the file yet
+      if (allKey || (recs[n].flags & FrameRecord::kKeyframe)) return FrameRef{si, n, s.times[n]};
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace br

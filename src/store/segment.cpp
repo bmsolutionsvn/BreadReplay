@@ -80,6 +80,7 @@ void put64(std::vector<uint8_t>& out, int64_t v) {
 std::vector<uint8_t> headerBytes(const SegmentHeader& h) {
   std::vector<uint8_t> out;
   put32(out, h.version);
+  if (h.version >= 2) out.push_back(static_cast<uint8_t>(h.codec));
   put32(out, static_cast<uint32_t>(h.inputId.size()));
   out.insert(out.end(), h.inputId.begin(), h.inputId.end());
   put32(out, h.width);
@@ -95,8 +96,15 @@ bool parseHeader(std::span<const uint8_t> b, SegmentHeader& h, int64_t& headerSi
   auto need = [&](size_t pos, size_t n) { return pos + n <= b.size(); };
   if (!need(0, 8)) return false;
   h.version = *reinterpret_cast<const uint32_t*>(&b[0]);
-  const uint32_t idLen = *reinterpret_cast<const uint32_t*>(&b[4]);
-  size_t pos = 8;
+  size_t pos = 4;
+  if (h.version >= 2) {
+    if (!need(pos, 1)) return false;
+    h.codec = static_cast<StoredCodec>(b[pos]);
+    ++pos;
+  }
+  if (!need(pos, 4)) return false;
+  const uint32_t idLen = *reinterpret_cast<const uint32_t*>(&b[pos]);
+  pos += 4;
   if (!need(pos, idLen)) return false;
   h.inputId.assign(reinterpret_cast<const char*>(&b[pos]), idLen);
   pos += idLen;
@@ -164,7 +172,7 @@ SegmentWriter::SegmentWriter(std::filesystem::path base, SegmentHeader h)
 SegmentWriter::~SegmentWriter() { close(); }
 
 void SegmentWriter::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-                           std::span<const float> audio) {
+                           std::span<const float> audio, bool keyframe) {
   if (!essence_) return;
   const uint32_t videoLen = static_cast<uint32_t>(video.size());
   const uint32_t audioLen = static_cast<uint32_t>(audio.size() * sizeof(float));
@@ -176,6 +184,7 @@ void SegmentWriter::append(int64_t tsUs, std::span<const uint8_t> video, uint32_
   rec.videoLen = videoLen;
   rec.previewLen = previewLen;
   rec.audioLen = audioLen;
+  rec.flags = (header_.codec == StoredCodec::Vmx || keyframe) ? FrameRecord::kKeyframe : 0;
 
   std::vector<uint8_t> head;
   head.reserve(kEssenceHeaderSize);

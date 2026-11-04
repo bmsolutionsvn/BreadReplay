@@ -10,8 +10,11 @@
 
 namespace br {
 
+enum class StoredCodec : uint8_t { Vmx, H264, Hevc };
+
 struct SegmentHeader {
-  uint32_t version = 1;
+  uint32_t version = 2;
+  StoredCodec codec = StoredCodec::Vmx;
   std::string inputId;
   uint32_t width = 0, height = 0;
   bc::Rate rate;
@@ -24,7 +27,8 @@ struct FrameRecord {
   int64_t tsUs = 0;
   int64_t offset = 0;  // start of the frame's 24-byte essence header
   uint32_t videoLen = 0, previewLen = 0, audioLen = 0;
-  uint32_t reserved = 0;
+  uint32_t flags = 0;  // bit 0 = keyframe
+  static constexpr uint32_t kKeyframe = 1;
 };
 static_assert(sizeof(FrameRecord) == 32);
 
@@ -35,7 +39,7 @@ class SegmentWriter {
   SegmentWriter(const SegmentWriter&) = delete;
   SegmentWriter& operator=(const SegmentWriter&) = delete;
   void append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-              std::span<const float> audio);
+              std::span<const float> audio, bool keyframe = true);
   void close();
   size_t frames() const;
   int64_t bytes() const;
