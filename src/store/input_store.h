@@ -29,11 +29,15 @@ class InputStore {
  public:
   InputStore(std::filesystem::path dir, SegmentHeader proto);  // loads + recovers existing segments
   void append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-              std::span<const float> audio, bool keyframe = true);
+              std::span<const float> audio, bool keyframe = true, int64_t srcPtsUs = INT64_MIN);
   std::optional<FrameRef> find(int64_t tsUs) const;  // at or before, else nullopt
   std::optional<FrameRef> frameAt(size_t segment, size_t index) const;  // by store position
   size_t frameCountIn(size_t segment) const;
   std::optional<FrameRef> keyframeAtOrBefore(const FrameRef&) const;
+  // The source's pts for a stored frame; its arrival tsUs in v1/v2 or when the source gave none.
+  int64_t srcPtsOf(const FrameRef&) const;
+  // Index of the next keyframe after a frame in the same segment, or that segment's frame count.
+  size_t nextKeyframeAfter(const FrameRef&) const;
   StoredCodec codecOf(const FrameRef&) const;
   bool isKeyframe(const FrameRef&) const;
   size_t droppedBeforeKeyframe() const;

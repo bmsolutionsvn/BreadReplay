@@ -67,6 +67,9 @@ std::filesystem::path withExt(const std::filesystem::path& base, const char* ext
   return std::filesystem::path(base.string() + ext);
 }
 
+// v3 added the source pts to the index record; v1/v2 records are the first 32 bytes.
+size_t recordSize(uint32_t version) { return version >= 3 ? sizeof(FrameRecord) : 32; }
+
 void put32(std::vector<uint8_t>& out, uint32_t v) {
   out.insert(out.end(), reinterpret_cast<const uint8_t*>(&v), reinterpret_cast<const uint8_t*>(&v) + 4);
 }
@@ -151,7 +154,8 @@ SegmentWriter::SegmentWriter(std::filesystem::path base, SegmentHeader h)
     }
     essencePos_ = sizeOf(static_cast<HANDLE>(essence_));
     const int64_t idxSize = sizeOf(static_cast<HANDLE>(index_));
-    frames_ = idxSize > indexHeaderSize_ ? static_cast<size_t>((idxSize - indexHeaderSize_) / 32) : 0;
+    const size_t rec = recordSize(header_.version);
+    frames_ = idxSize > indexHeaderSize_ ? static_cast<size_t>((idxSize - indexHeaderSize_) / rec) : 0;
     LARGE_INTEGER end;
     end.QuadPart = 0;
     SetFilePointerEx(static_cast<HANDLE>(index_), end, nullptr, FILE_END);
@@ -172,7 +176,7 @@ SegmentWriter::SegmentWriter(std::filesystem::path base, SegmentHeader h)
 SegmentWriter::~SegmentWriter() { close(); }
 
 void SegmentWriter::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-                           std::span<const float> audio, bool keyframe) {
+                           std::span<const float> audio, bool keyframe, int64_t srcPtsUs) {
   if (!essence_) return;
   const uint32_t videoLen = static_cast<uint32_t>(video.size());
   const uint32_t audioLen = static_cast<uint32_t>(audio.size() * sizeof(float));
@@ -180,6 +184,7 @@ void SegmentWriter::append(int64_t tsUs, std::span<const uint8_t> video, uint32_
 
   FrameRecord rec;
   rec.tsUs = tsUs;
+  rec.srcPtsUs = srcPtsUs == INT64_MIN ? tsUs : srcPtsUs;
   rec.offset = essencePos_;
   rec.videoLen = videoLen;
   rec.previewLen = previewLen;
@@ -203,7 +208,7 @@ void SegmentWriter::append(int64_t tsUs, std::span<const uint8_t> video, uint32_
 
   // The record reaches the file at once so a reader sees it; FlushFileBuffers is the crash
   // barrier and only runs every 0.5 s of timestamps.
-  writeAll(static_cast<HANDLE>(index_), &rec, sizeof(rec));
+  writeAll(static_cast<HANDLE>(index_), &rec, recordSize(header_.version));
   ++frames_;
   if (lastFlushTs_ == INT64_MIN || tsUs - lastFlushTs_ >= kFlushIntervalUs) {
     flushIndex();
@@ -253,12 +258,18 @@ void SegmentReader::refresh() {
   if (idx == INVALID_HANDLE_VALUE) return;
   const int64_t n = sizeOf(idx);
   const size_t have = records_.size();
-  const int64_t available = n > recordsOffset_ ? (n - recordsOffset_) / 32 : 0;
+  const size_t rec = recordSize(header_.version);
+  const int64_t available = n > recordsOffset_ ? (n - recordsOffset_) / static_cast<int64_t>(rec) : 0;
   if (static_cast<int64_t>(have) < available) {
     const size_t add = static_cast<size_t>(available) - have;
-    std::vector<FrameRecord> more(add);
-    if (readAt(idx, recordsOffset_ + static_cast<int64_t>(have) * 32, more.data(), add * sizeof(FrameRecord))) {
-      records_.insert(records_.end(), more.begin(), more.end());
+    std::vector<uint8_t> raw(add * rec);
+    if (readAt(idx, recordsOffset_ + static_cast<int64_t>(have * rec), raw.data(), raw.size())) {
+      for (size_t i = 0; i < add; ++i) {
+        FrameRecord r{};
+        std::memcpy(&r, raw.data() + i * rec, rec);
+        if (rec < sizeof(FrameRecord)) r.srcPtsUs = r.tsUs;
+        records_.push_back(r);
+      }
     }
   }
   CloseHandle(idx);
@@ -309,11 +320,17 @@ void recoverSegment(const std::filesystem::path& base) {
     return;
   }
   const int64_t n = sizeOf(idx);
-  const size_t count = n > headerSize ? static_cast<size_t>((n - headerSize) / 32) : 0;
+  const size_t rec = recordSize(h.version);
+  const size_t count = n > headerSize ? static_cast<size_t>((n - headerSize) / static_cast<int64_t>(rec)) : 0;
+  std::vector<uint8_t> raw(count * rec);
   std::vector<FrameRecord> recs(count);
-  if (count && !readAt(idx, headerSize, recs.data(), count * sizeof(FrameRecord))) {
+  if (count && !readAt(idx, headerSize, raw.data(), raw.size())) {
     CloseHandle(idx);
     return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    std::memcpy(&recs[i], raw.data() + i * rec, rec);
+    if (rec < sizeof(FrameRecord)) recs[i].srcPtsUs = recs[i].tsUs;
   }
   CloseHandle(idx);
 
@@ -342,7 +359,7 @@ void recoverSegment(const std::filesystem::path& base) {
 
   HANDLE w = openWrite(idxPath, true);
   if (w != INVALID_HANDLE_VALUE) {
-    pos.QuadPart = static_cast<int64_t>(headerSize) + static_cast<int64_t>(keep) * 32;
+    pos.QuadPart = static_cast<int64_t>(headerSize) + static_cast<int64_t>(keep) * static_cast<int64_t>(recordSize(h.version));
     SetFilePointerEx(w, pos, nullptr, FILE_BEGIN);
     SetEndOfFile(w);
     FlushFileBuffers(w);

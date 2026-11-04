@@ -132,6 +132,11 @@ std::vector<uint8_t> packetToAnnexB(std::vector<uint8_t> au, StoredCodec codec) 
   return au;  // shortcut: non-Annex-B HEVC is left as received; add when a source needs it
 }
 
+int64_t packetSourcePtsUs(int64_t pts, AVRational timeBase, int64_t arrivalUs) {
+  if (pts == AV_NOPTS_VALUE || timeBase.num <= 0 || timeBase.den <= 0) return arrivalUs;
+  return av_rescale_q(pts, timeBase, AVRational{1, 1'000'000});
+}
+
 void prependParameterSets(std::vector<uint8_t>& au, const AVCodecParameters& p, StoredCodec codec) {
   if (hasParameterSets(au, codec)) return;
   const auto sets = extradataAnnexB(p, codec);
@@ -182,7 +187,7 @@ void Engine::Sink::onCodedVideo(const bc::CodedVideoFrame& f) {
   }
   const StoredCodec codec = f.codec == "h264" ? StoredCodec::H264 : StoredCodec::Hevc;
   coded_ = true;
-  rec->pushCodedAu(engine.now(), codec, f.width, f.height, f.keyframe, std::move(bytes));
+  rec->pushCodedAu(engine.now(), f.ptsUs, codec, f.width, f.height, f.keyframe, std::move(bytes));
 }
 
 void Engine::Sink::onPacket(std::shared_ptr<const bc::MediaPacket> p) {
@@ -200,7 +205,9 @@ void Engine::Sink::onPacket(std::shared_ptr<const bc::MediaPacket> p) {
   if (au.empty()) return;
   const bool keyframe = (p->pkt->flags & AV_PKT_FLAG_KEY) != 0;
   if (keyframe) prependParameterSets(au, *p->params, codec);
-  rec->pushCodedAu(engine.now(), codec, static_cast<uint32_t>(p->params->width),
+  const int64_t arrivalUs = engine.now();
+  const int64_t srcPtsUs = packetSourcePtsUs(p->pkt->pts, p->timeBase, arrivalUs);
+  rec->pushCodedAu(arrivalUs, srcPtsUs, codec, static_cast<uint32_t>(p->params->width),
                    static_cast<uint32_t>(p->params->height), keyframe, std::move(au));
 }
 

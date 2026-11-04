@@ -62,8 +62,8 @@ void Recorder::pushCoded(int64_t tsUs, std::vector<uint8_t> vmx) {
   cv_.notify_one();
 }
 
-void Recorder::pushCodedAu(int64_t tsUs, StoredCodec codec, uint32_t w, uint32_t h, bool keyframe,
-                           std::vector<uint8_t> au) {
+void Recorder::pushCodedAu(int64_t tsUs, int64_t srcPtsUs, StoredCodec codec, uint32_t w, uint32_t h,
+                           bool keyframe, std::vector<uint8_t> au) {
   std::unique_lock lock(m_);
   if (awaitKeyframe_) {
     if (!keyframe) {
@@ -81,6 +81,7 @@ void Recorder::pushCodedAu(int64_t tsUs, StoredCodec codec, uint32_t w, uint32_t
   Job j;
   j.seq = nextSeq_++;
   j.tsUs = tsUs;
+  j.srcPtsUs = srcPtsUs;
   j.codedAu = true;
   j.codec = codec;
   j.keyframe = keyframe;
@@ -143,6 +144,7 @@ void Recorder::worker() {
     const auto t0 = std::chrono::steady_clock::now();
     Done d;
     d.tsUs = job.tsUs;
+    d.srcPtsUs = job.srcPtsUs;
     d.audio = std::move(job.audio);
     d.w = job.w;
     d.h = job.h;
@@ -211,7 +213,7 @@ void Recorder::writerLoop() {
       store_.changeVideoFormat(d.w, d.h, store_.header().rate, codec);
     }
     if (d.codedAu) {
-      store_.append(d.tsUs, d.raw, 0, d.audio, d.keyframe);
+      store_.append(d.tsUs, d.raw, 0, d.audio, d.keyframe, d.srcPtsUs);
     } else {
       const std::span<const uint8_t> bytes =
           d.coded ? std::span<const uint8_t>(d.raw) : std::span<const uint8_t>(d.frame.bytes);

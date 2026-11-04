@@ -347,8 +347,8 @@ TEST_CASE("FrameSource: a long-GOP H.264 recording decodes on the GPU with seek 
   br::InputStore store(dir.path, header);
   br::Recorder rec(store, br::VmxQuality::SQ, 512, 1);
   for (size_t i = 0; i < enc.aus.size(); ++i) {
-    rec.pushCodedAu(kBase + static_cast<int64_t>(i) * 33333, br::StoredCodec::H264, enc.w, enc.h, enc.key[i],
-                    enc.aus[i]);
+    const int64_t ts = kBase + static_cast<int64_t>(i) * 33333;
+    rec.pushCodedAu(ts, ts, br::StoredCodec::H264, enc.w, enc.h, enc.key[i], enc.aus[i]);
   }
   for (int i = 0; i < 400 && rec.stats().framesWritten < enc.aus.size(); ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));

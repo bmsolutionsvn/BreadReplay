@@ -53,7 +53,7 @@ InputStore::InputStore(std::filesystem::path dir, SegmentHeader proto)
 }
 
 void InputStore::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t previewLen,
-                        std::span<const float> audio, bool keyframe) {
+                        std::span<const float> audio, bool keyframe, int64_t srcPtsUs) {
   std::unique_lock lock(m_);
   const int64_t key = minuteKey(tsUs);
   // Compare the minute with the segment's start, so a segment that crossed a minute mid-GOP still
@@ -94,7 +94,7 @@ void InputStore::append(int64_t tsUs, std::span<const uint8_t> video, uint32_t p
     }
   }
   Seg& s = segs_.back();
-  s.writer->append(tsUs, video, previewLen, audio, keyframe);
+  s.writer->append(tsUs, video, previewLen, audio, keyframe, srcPtsUs);
   s.times.push_back(tsUs);
   s.bytes += static_cast<int64_t>(24) + static_cast<int64_t>(audio.size() * sizeof(float)) +
              static_cast<int64_t>(video.size());
@@ -122,6 +122,27 @@ std::optional<FrameRef> InputStore::frameAt(size_t segment, size_t index) const 
 size_t InputStore::frameCountIn(size_t segment) const {
   std::shared_lock lock(m_);
   return segment < segs_.size() ? segs_[segment].times.size() : 0;
+}
+
+int64_t InputStore::srcPtsOf(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return ref.tsUs;
+  auto* r = const_cast<SegmentReader*>(segs_[ref.segment].reader.get());
+  r->refresh();
+  const auto& recs = r->records();
+  return ref.index < recs.size() ? recs[ref.index].srcPtsUs : ref.tsUs;
+}
+
+size_t InputStore::nextKeyframeAfter(const FrameRef& ref) const {
+  std::shared_lock lock(m_);
+  if (ref.segment >= segs_.size() || !segs_[ref.segment].reader) return ref.index + 1;
+  auto* r = const_cast<SegmentReader*>(segs_[ref.segment].reader.get());
+  r->refresh();
+  const auto& recs = r->records();
+  for (size_t i = ref.index + 1; i < recs.size(); ++i) {
+    if (recs[i].flags & FrameRecord::kKeyframe) return i;
+  }
+  return recs.size();
 }
 
 bool InputStore::isGapAt(int64_t tsUs) const {
