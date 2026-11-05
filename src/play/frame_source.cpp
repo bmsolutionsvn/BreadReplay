@@ -15,6 +15,34 @@ FrameSource::FrameSource(std::map<std::string, const InputStore*> stores, bc::Gp
   if (gpu_ && pool_) conv_ = std::make_unique<bc::Converter>(*gpu_, *pool_);
 }
 
+void FrameSource::setStores(std::map<std::string, const InputStore*> stores) {
+  std::lock_guard lock(m_);
+  stores_ = std::move(stores);
+  for (auto it = decoders_.begin(); it != decoders_.end();) {
+    if (stores_.count(it->first.first)) {
+      ++it;
+    } else {
+      it = decoders_.erase(it);
+    }
+  }
+  for (auto it = cache_.begin(); it != cache_.end();) {
+    if (stores_.count(it->first.input)) {
+      ++it;
+      continue;
+    }
+    cacheBytes_ -= bytesOf(*it->second);
+    it = cache_.erase(it);
+  }
+  lru_.remove_if([&](const Key& k) { return !stores_.count(k.input); });
+  for (auto it = provisional_.begin(); it != provisional_.end();) {
+    if (stores_.count(std::get<0>(*it))) {
+      ++it;
+    } else {
+      it = provisional_.erase(it);
+    }
+  }
+}
+
 void FrameSource::ensureDecoder(const std::string& id, size_t lane, uint32_t w, uint32_t h) {
   auto& d = decoders_[{id, lane}];
   if (!d.decoder || d.w != w || d.h != h) {

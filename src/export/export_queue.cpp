@@ -98,6 +98,20 @@ std::vector<ExportState> ExportQueue::states() const {
   return out;
 }
 
+std::vector<ProtectedRange> ExportQueue::protectedRanges() const {
+  static constexpr int64_t kMarginUs = 3'000'000;
+  std::lock_guard lock(m_);
+  std::vector<ProtectedRange> out;
+  for (const auto& e : entries_) {
+    if (e.state.state != "queued" && e.state.state != "running") continue;
+    for (const auto& ev : e.job.events) {
+      out.push_back({std::min(ev.inUs, ev.outUs) - kMarginUs,
+                     std::max(ev.inUs, ev.outUs) + kMarginUs});
+    }
+  }
+  return out;
+}
+
 void ExportQueue::stop() {
   stopping_ = true;
   cv_.notify_all();

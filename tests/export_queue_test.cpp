@@ -6,6 +6,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -366,6 +367,29 @@ TEST_CASE("Export: an unwritable folder fails with a reason"
   CHECK(state.state == "failed");
   CHECK_FALSE(state.error.empty());
   CHECK_FALSE(std::filesystem::exists(final.string() + ".part"));
+}
+
+TEST_CASE("Export: a queued export's media is protected") {
+  Fixture f;
+  br::Event e;
+  e.id = 1;
+  e.inUs = 20 * kS;
+  e.outUs = 25 * kS;
+  br::ExportJob job;
+  job.name = "Export";
+  job.codec = br::ExportCodec::H264;
+  job.bitRate = 4'000'000;
+  job.path = f.dir.path / "p.mp4";
+  job.events.push_back(e);
+  br::ExportQueue q(f.stores, f.settings);
+  const int id = q.add(job);
+  const auto ranges = q.protectedRanges();
+  CHECK(std::any_of(ranges.begin(), ranges.end(), [](const br::ProtectedRange& r) {
+    return r.inUs == 17 * kS && r.outUs == 28 * kS;
+  }));
+  const auto state = waitFor(q, id, std::chrono::seconds(60));
+  REQUIRE_FALSE(state.state.empty());
+  CHECK(q.protectedRanges().empty());
 }
 
 TEST_CASE("Export: stop during a job deletes its part" BC_REQUIRES(bc::test::Req::H264Encoder)) {

@@ -351,7 +351,11 @@ void Engine::buildOutputs() {
 void Engine::rebuildFrameSource() {
   std::map<std::string, const InputStore*> map;
   for (const auto& [id, store] : stores_) map[id] = store.get();
-  source_ = std::make_unique<FrameSource>(std::move(map), deps_.gpu, deps_.pool);
+  if (source_) {
+    source_->setStores(std::move(map));
+  } else {
+    source_ = std::make_unique<FrameSource>(std::move(map), deps_.gpu, deps_.pool);
+  }
 }
 
 // The queue holds pointers into stores_, so it stops before a store is replaced or destroyed.
@@ -447,12 +451,18 @@ void Engine::applySettings(const nlohmann::json& j) {
 }
 
 void Engine::addInput(const ShowInput& in) {
+  const bool isNew = !stores_.count(in.id);
   show_.inputs.push_back(in);
   if (started_) {
     buildInputs();
     rebuildFrameSource();
     rebuildExportQueue();
-    if (recording_) recordStart();
+    // Start only the input just added: starting them all would start a running one twice.
+    if (recording_ && isNew) {
+      if (auto it = inputs_.find(in.id); it != inputs_.end() && it->second) {
+        it->second->start(*sinks_[in.id]);
+      }
+    }
   }
 }
 
@@ -467,13 +477,19 @@ void Engine::removeInput(const std::string& id) {
   inputs_.erase(id);
   sinks_.erase(id);
   recorders_.erase(id);
-  stores_.erase(id);
+  // Keep the store alive until the frame source has stopped pointing at it.
+  std::unique_ptr<InputStore> removedStore;
+  if (auto it = stores_.find(id); it != stores_.end()) {
+    removedStore = std::move(it->second);
+    stores_.erase(it);
+  }
   inputStates_.erase(id);
   show_.inputs.erase(std::remove_if(show_.inputs.begin(), show_.inputs.end(),
                                     [&](const ShowInput& i) { return i.id == id; }),
                      show_.inputs.end());
   if (started_) {
     rebuildFrameSource();
+    removedStore.reset();
     rebuildExportQueue();
   }
 }
@@ -531,8 +547,9 @@ void Engine::setNativeVideoReason(std::string reason) {
 }
 
 nlohmann::json Engine::statusJson() {
-  std::lock_guard lock(m_);
+  // cmdM_ first: every other path that takes both takes cmdM_ before m_.
   std::lock_guard cmdLock(cmdM_);
+  std::lock_guard lock(m_);
   nlohmann::json j;
   j["type"] = "status";
   j["recording"] = recording_;
@@ -634,7 +651,11 @@ void Engine::retentionTick() {
   const double rate = writeMeter_.bytesPerSec(t);
   const int64_t freeB = freeBytesAt(folder_);
   const int64_t minFree = static_cast<int64_t>(rate * 120.0);  // two minutes of the current write rate
-  const auto keep = show_.events.protectedRanges();
+  auto keep = show_.events.protectedRanges();
+  if (exportQueue_) {
+    const auto inFlight = exportQueue_->protectedRanges();
+    keep.insert(keep.end(), inFlight.begin(), inFlight.end());
+  }
   const auto del = segmentsToDelete(all, show_.settings.limit, freeB, minFree, keep);
   for (const auto& d : del) {
     if (auto it = stores_.find(d.inputId); it != stores_.end()) it->second->removeSegment(d.info.base);
@@ -805,25 +826,25 @@ void Engine::statusLoop() {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     if (!running_ || !sendText_) continue;
     try {
-      sendText_(statusJson().dump());
-      const uint64_t version = show_.events.version();
+      // try: stop() joins this thread while holding cmdM_, so it must never wait for cmdM_.
       std::unique_lock cmdLock(cmdM_, std::try_to_lock);
       if (!cmdLock.owns_lock()) continue;
+      sendText_(statusJson().dump());
+      // The workspace survives a crash: events and settings reach show.json within a few seconds.
+      const int64_t t = now();
+      if (t - lastSaveUs_ > 5'000'000) {
+        lastSaveUs_ = t;
+        saveShow();
+      }
+      const uint64_t version = show_.events.version();
       if (version != eventsVersionSent_) {
         eventsVersionSent_ = version;
         nlohmann::json e;
         e["type"] = "events";
         e["version"] = version;
         e["events"] = show_.events.toJson();
-        cmdLock.unlock();
+        cmdLock.unlock();  // and never take cmdM_ again this tick
         sendText_(e.dump());
-        cmdLock.lock();
-      }
-      // The workspace survives a crash: events and settings reach show.json within a few seconds.
-      const int64_t t = now();
-      if (t - lastSaveUs_ > 5'000'000) {
-        lastSaveUs_ = t;
-        saveShow();
       }
     } catch (const std::exception&) {
     }

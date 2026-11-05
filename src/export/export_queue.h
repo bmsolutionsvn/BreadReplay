@@ -42,6 +42,8 @@ class ExportQueue {
   int add(ExportJob job);
   void cancel(int id);
   std::vector<ExportState> states() const;  // queued/running plus the last 5 finished
+  // In − 3 s … Out + 3 s of every event in queued and running jobs.
+  std::vector<ProtectedRange> protectedRanges() const;
   void stop();
 
  private:
