@@ -502,6 +502,7 @@ void Engine::addInput(const ShowInput& in) {
   show_.inputs.push_back(in);
   if (started_) {
     buildInputs();
+    rebuildCleanupRunner();
     rebuildFrameSource();
     if (exportQueue_) {
       std::map<std::string, const InputStore*> map;
@@ -523,6 +524,7 @@ void Engine::updateInput(const ShowInput& in) {
 }
 
 void Engine::removeInput(const std::string& id) {
+  if (cleanup_) cleanup_->stop();  // the runner must not outlive a store it rewrites
   if (exportQueue_) {
     std::map<std::string, const InputStore*> map;
     for (const auto& [storeId, store] : stores_) {
@@ -548,6 +550,7 @@ void Engine::removeInput(const std::string& id) {
   if (started_) {
     rebuildFrameSource();
     removedStore.reset();
+    rebuildCleanupRunner();
   }
 }
 
@@ -574,6 +577,8 @@ const InputStore* Engine::store(const std::string& id) const {
   auto it = stores_.find(id);
   return it == stores_.end() ? nullptr : it->second.get();
 }
+
+size_t Engine::cleanupStoreCount() const { return cleanup_ ? cleanup_->storeCount() : 0; }
 
 void Engine::saveShow() {
   std::lock_guard lock(cmdM_);

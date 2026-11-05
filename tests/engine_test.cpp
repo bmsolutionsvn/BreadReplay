@@ -379,6 +379,40 @@ TEST_CASE("Engine: removing and re-adding an input while Output plays does not c
   engine.stop();
 }
 
+TEST_CASE("Engine: cleanup covers an input added later and survives input churn") {
+  Fixture f;
+  br::Show two = f.makeShow(2);
+  br::ShowInput second = two.inputs[1];
+  br::Show show;
+  show.name = two.name;
+  show.settings = two.settings;
+  show.inputs.push_back(two.inputs[0]);
+  br::Engine engine(f.depsMakers(), std::move(show), f.dir.path / "show");
+  engine.start();
+  CHECK(engine.cleanupStoreCount() == 1);
+
+  auto addSecond = [&] {
+    return engine
+        .handle({{"cmd", "input.add"},
+                 {"id", second.id},
+                 {"name", second.name},
+                 {"kind", second.input.kind},
+                 {"params", second.input.params}})
+        .at("ok")
+        .get<bool>();
+  };
+  CHECK(addSecond());
+  CHECK(engine.cleanupStoreCount() == 2);
+
+  for (int i = 0; i < 20; ++i) {
+    CHECK(engine.handle({{"cmd", "cleanup.run"}}).at("ok").get<bool>());
+    CHECK(engine.handle({{"cmd", "input.remove"}, {"id", second.id}}).at("ok").get<bool>());
+    CHECK(addSecond());
+  }
+  CHECK(engine.cleanupStoreCount() == 2);
+  engine.stop();
+}
+
 TEST_CASE("Engine: an SRT packet's colour space becomes the stored hint") {
   CHECK(br::srtColour(AVCOL_SPC_BT709) == br::StoredColour::Bt709);
   CHECK(br::srtColour(AVCOL_SPC_BT470BG) == br::StoredColour::Bt601);
