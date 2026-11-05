@@ -117,7 +117,7 @@ export function moveBlock(ev: EventEdit, i: number, deltaUs: number, lim: Limits
   return out;
 }
 
-export function split(ev: EventEdit, tUs: number, periodUs = 100_000): EventEdit {
+export function split(ev: EventEdit, tUs: number, periodUs: number): EventEdit {
   const out = clone(ev);
   const at = Math.round(tUs / periodUs) * periodUs;
   if (at <= ev.inUs || at >= ev.outUs || out.angles.some((a) => a.tUs === at)) return out;

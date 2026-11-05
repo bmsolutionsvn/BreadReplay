@@ -29,10 +29,6 @@ export interface TimeRange {
   toUs: number;
 }
 
-// shortcut: the UI has no show-rate field, so edits snap to this grid; read the rate from
-// status when the engine exposes it.
-const PERIOD_US = 100_000;
-
 const span = (v: TimeRange) => Math.max(1, v.toUs - v.fromUs);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -55,6 +51,7 @@ type Props = {
   onSelectBlock?: (i: number | null) => void;
   fitKey?: number;
   pin?: MarkStamp | null;
+  periodUs: number;
   width?: number;
 };
 
@@ -89,6 +86,7 @@ export function Timeline({
   onSelectBlock,
   fitKey = 0,
   pin = null,
+  periodUs,
   width = 1000,
 }: Props) {
   const menu = useContextMenu();
@@ -137,12 +135,14 @@ export function Timeline({
   const playhead = previewStatus?.posUs;
   const pgm = status?.players.output.eventId != null ? status.players.output.posUs : null;
 
-  const lim = (e: EventEdit): Limits => mediaLimits(status?.inputs ?? [], e, PERIOD_US);
+  const lim = (e: EventEdit): Limits => mediaLimits(status?.inputs ?? [], e, periodUs);
   const targets = (e: EventEdit): number[] => [playhead ?? 0, pgm ?? 0, e.inUs, e.outUs, ...e.angles.map((a) => a.tUs)];
   const timeAt = (clientX: number) => xToTime(clientX - (lane.current?.getBoundingClientRect().left ?? 0), view, w);
 
   function snapped(e: EventEdit, tUs: number, shift: boolean): number {
-    return snapTime(tUs, { periodUs: PERIOD_US, targets: targets(e), usPerPx: span(view) / w, snap: !shift });
+    // The frame under the pointer (a trim never takes the frame past it), then targets win.
+    const onFrame = Math.floor(tUs / periodUs) * periodUs;
+    return snapTime(onFrame, { periodUs, targets: targets(e), usPerPx: span(view) / w, snap: !shift });
   }
 
   function send(next: EventEdit) {
@@ -385,7 +385,7 @@ export function Timeline({
                         if (!event || !ev) return;
                         const at = playhead ?? ev.inUs;
                         menu(e, [
-                          { label: 'Split at playhead', onSelect: () => send(split(ev, at)) },
+                          { label: 'Split at playhead', onSelect: () => send(split(ev, at, periodUs)) },
                           { label: 'Delete block', onSelect: () => send(deleteBlock(ev, i)) },
                         ]);
                       }}

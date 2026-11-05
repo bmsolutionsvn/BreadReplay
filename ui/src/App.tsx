@@ -15,11 +15,16 @@ import { groupOf } from './screen/selection';
 import { SpeedLever } from './screen/SpeedLever';
 import { StatusBar } from './screen/StatusBar';
 import { Timeline } from './screen/Timeline';
-import { deleteBlock, split } from './screen/timelineEdits';
+import { deleteBlock, split, type EventEdit } from './screen/timelineEdits';
 import { TitleBar } from './screen/TitleBar';
 import { setEvents, setStatus, useEvents, useStatus } from './state/store';
 
-const FPS = 60_000 / 1001;
+const sameEdit = (a: EventEdit, b: EventEdit) =>
+  a.inUs === b.inUs &&
+  a.outUs === b.outUs &&
+  JSON.stringify(a.angles) === JSON.stringify(b.angles) &&
+  JSON.stringify(a.speeds) === JSON.stringify(b.speeds) &&
+  JSON.stringify(a.zooms) === JSON.stringify(b.zooms);
 
 // Everything below the engine connection; tests render this with a fake client.
 export function App({ client }: { client: Client }) {
@@ -106,7 +111,8 @@ export function App({ client }: { client: Client }) {
 
   const event = events?.events.find((e) => e.id === selected) ?? null;
   const pos = status?.players.preview.posUs ?? 0;
-  const periodUs = Math.round(1_000_000 / FPS);
+  const fps = status?.rate ? status.rate.num / status.rate.den : 60_000 / 1001;
+  const periodUs = Math.round(1_000_000 / fps);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,7 +122,7 @@ export function App({ client }: { client: Client }) {
         previewLocked: status?.players.preview.locked,
         previewPlaying: status?.players.preview.playing,
         selectedEventId: selected,
-        fps: FPS,
+        fps,
       });
       if (!cmd) return;
       e.preventDefault();
@@ -131,13 +137,14 @@ export function App({ client }: { client: Client }) {
       } else if (cmd.cmd === 'ui.split') {
         if (!event) return;
         const next = split(event, pos, periodUs);
-        void client.send({ cmd: 'event.update', id: event.id, ...next });
+        if (!sameEdit(event, next)) void client.send({ cmd: 'event.update', id: event.id, ...next });
       } else if (cmd.cmd === 'ui.fit') {
         setFitKey((k) => k + 1);
       } else if (cmd.cmd === 'ui.delete') {
         if (!event) return;
         if (selectedBlock != null) {
-          void client.send({ cmd: 'event.update', id: event.id, ...deleteBlock(event, selectedBlock) });
+          const next = deleteBlock(event, selectedBlock);
+          if (!sameEdit(event, next)) void client.send({ cmd: 'event.update', id: event.id, ...next });
         } else if (selectedIds.length) {
           void client.send({ cmd: 'event.delete', ids: selectedIds });
         }
@@ -185,7 +192,7 @@ export function App({ client }: { client: Client }) {
 
       <div className="main">
         <div className="stage">
-          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
+          <Monitors status={status} fps={fps} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
           <AngleRow status={status} client={client} hotkeys={hotkeys} native={native} />
           <Timeline
             client={client}
@@ -201,6 +208,7 @@ export function App({ client }: { client: Client }) {
             fitKey={fitKey}
             status={status}
             pin={lastMark}
+            periodUs={periodUs}
           />
           <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} target={target} onMark={sendMark} />
         </div>

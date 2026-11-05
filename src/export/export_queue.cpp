@@ -53,11 +53,16 @@ int ExportQueue::add(ExportJob job) {
   std::lock_guard lock(m_);
   // Two jobs queued in the same minute choose the same name before either writes its .part.
   std::filesystem::path path = job.path;
+  auto part = [](std::filesystem::path p) {
+    p += ".part";
+    return p;
+  };
   for (int n = 2; reserved_.count(path) || std::filesystem::exists(path) ||
-                  std::filesystem::exists(path.string() + ".part");
+                  std::filesystem::exists(part(path));
        ++n) {
-    path = job.path.parent_path() /
-           (job.path.stem().string() + " (" + std::to_string(n) + ").mp4");
+    std::filesystem::path name = job.path.stem();
+    name += " (" + std::to_string(n) + ").mp4";
+    path = job.path.parent_path() / name;
   }
   reserved_.insert(path);
   job.path = path;
@@ -65,7 +70,8 @@ int ExportQueue::add(ExportJob job) {
   entry.state.id = nextId_++;
   entry.state.name = job.name;
   entry.state.state = "queued";
-  entry.state.path = job.path.string();
+  const auto utf8 = job.path.u8string();
+  entry.state.path = std::string(reinterpret_cast<const char*>(utf8.c_str()), utf8.size());
   entry.job = std::move(job);
   entries_.push_back(std::move(entry));
   cv_.notify_one();
@@ -89,6 +95,20 @@ std::vector<ExportState> ExportQueue::states() const {
   std::vector<ExportState> out;
   out.reserve(entries_.size());
   for (const auto& e : entries_) out.push_back(e.state);
+  return out;
+}
+
+std::vector<ProtectedRange> ExportQueue::protectedRanges() const {
+  static constexpr int64_t kMarginUs = 3'000'000;
+  std::lock_guard lock(m_);
+  std::vector<ProtectedRange> out;
+  for (const auto& e : entries_) {
+    if (e.state.state != "queued" && e.state.state != "running") continue;
+    for (const auto& ev : e.job.events) {
+      out.push_back({std::min(ev.inUs, ev.outUs) - kMarginUs,
+                     std::max(ev.inUs, ev.outUs) + kMarginUs});
+    }
+  }
   return out;
 }
 

@@ -44,6 +44,8 @@ class FrameSource {
                                           size_t lane = 0);  // nullptr if none
   void prefetch(const std::string& inputId, int64_t fromUs, int64_t stepUs, int count);
   std::shared_ptr<const PreviewImage> preview(const std::string& inputId, int64_t tsUs);
+  // Swaps the map in place: the output/preview threads keep reading this same object.
+  void setStores(std::map<std::string, const InputStore*> stores);
   uint64_t diskReads() const { return diskReads_.load(); }
   uint64_t decodes() const { return decodes_.load(); }  // pictures decoded
   uint64_t resets() const { return resets_.load(); }    // decoder seeks

@@ -31,26 +31,59 @@ Player::Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool free
   periodUs_ = static_cast<int64_t>(1'000'000.0 / showRate.fps() + 0.5);
 }
 
-std::unique_lock<std::recursive_mutex> Player::lockStore() const {
-  if (lock_) return std::unique_lock<std::recursive_mutex>(*lock_);
+std::unique_lock<std::recursive_mutex> Player::lockStore(bool wait) const {
+  if (!lock_) return {};
+  if (wait) return std::unique_lock<std::recursive_mutex>(*lock_);
+  return std::unique_lock<std::recursive_mutex>(*lock_, std::try_to_lock);
+}
+
+std::unique_lock<std::recursive_mutex> Player::tryStore() const {
+  if (lock_) return std::unique_lock<std::recursive_mutex>(*lock_, std::try_to_lock);
   return {};
 }
 
-const Event* Player::event() const {
-  if (frozen_) return &*frozen_;
-  return state_.eventId ? events_.find(*state_.eventId) : nullptr;
+const Event* Player::event() const { return copy_ ? &*copy_ : nullptr; }
+
+void Player::refreshCopy() {
+  if (!freeze_ && copy_ && !state_.eventId) copy_.reset();
+  if (freeze_ || !state_.eventId) return;
+  if (copy_ && events_.version() == copyVersion_) return;
+  if (const Event* e = events_.find(*state_.eventId)) {
+    copy_ = *e;
+    copyVersion_ = events_.version();
+  } else {
+    copy_.reset();
+  }
+}
+
+Player::PendingWrites& Player::pendingFor(int eventId) {
+  if (!pending_.empty() && pending_.back().eventId == eventId) return pending_.back();
+  pending_.push_back(PendingWrites{});
+  pending_.back().eventId = eventId;
+  return pending_.back();
+}
+
+void Player::flushPending() {
+  if (!storeDirty_) return;
+  for (auto& p : pending_) {
+    if (p.eventId == 0) continue;
+    if (p.angles) events_.setAngles(p.eventId, std::move(p.angleValues));
+    if (p.speeds) events_.setSpeeds(p.eventId, std::move(p.speedValues));
+    if (p.zooms) events_.setZooms(p.eventId, std::move(p.zoomValues));
+  }
+  pending_.clear();
+  storeDirty_ = false;
 }
 
 void Player::cue(int eventId) {
   auto held = lockStore();
+  std::lock_guard pl(m_);
+  flushPending();
   const Event* e = events_.find(eventId);
   if (!e) return;
-  endPass();
-  if (freeze_) {
-    frozen_ = *e;
-  } else {
-    frozen_.reset();
-  }
+  endPass(true);
+  copy_ = *e;
+  copyVersion_ = events_.version();
   state_.eventId = eventId;
   state_.posUs = e->inUs;
   state_.angle = angleAt(*e, e->inUs);
@@ -62,10 +95,14 @@ void Player::cue(int eventId) {
   ended_ = false;
 }
 
-void Player::cueCopy(const Event& e) {
-  auto held = lockStore();
-  endPass();
-  frozen_ = e;
+void Player::cueCopy(const Event& e, bool waitForStore) {
+  auto held = lockStore(waitForStore);
+  std::lock_guard pl(m_);
+  const bool owned = !lock_ || held.owns_lock();
+  if (owned) flushPending();
+  endPass(owned);
+  copy_ = e;
+  copyVersion_ = events_.version();
   state_.eventId = e.id;
   state_.posUs = e.inUs;
   state_.angle = angleAt(e, e.inUs);
@@ -79,8 +116,11 @@ void Player::cueCopy(const Event& e) {
 
 void Player::cueAt(int64_t t, const std::string& angle) {
   auto held = lockStore();
-  endPass();
-  frozen_.reset();
+  std::lock_guard pl(m_);
+  flushPending();
+  endPass(true);
+  copy_.reset();
+  copyVersion_ = 0;
   state_.eventId.reset();
   state_.posUs = t;
   state_.angle = angle;
@@ -92,72 +132,89 @@ void Player::cueAt(int64_t t, const std::string& angle) {
   ended_ = false;
 }
 
-void Player::beginPass() {
+void Player::beginPass(bool storeOwned) {
   passAngles_ = {};
   passSpeeds_ = {};
   passZooms_ = {};
   passHasBase_ = false;
-  const Event* store = state_.eventId ? events_.find(*state_.eventId) : nullptr;
+  passEventId_ = 0;
   const Event* picture = event();
-  if (!recordCuts_ || !store || !picture || state_.dir != +1) return;
-  baseAngles_ = store->angles;
-  baseSpeeds_ = store->speeds;
-  baseZooms_ = store->zooms;
-  frozenBaseAngles_ = frozen_ ? frozen_->angles : store->angles;
-  frozenBaseSpeeds_ = frozen_ ? frozen_->speeds : store->speeds;
-  frozenBaseZooms_ = frozen_ ? frozen_->zooms : store->zooms;
+  if (!recordCuts_ || !picture || state_.dir != +1) return;
+  const Event* store = nullptr;
+  if (storeOwned && state_.eventId) store = events_.find(*state_.eventId);
+  if (storeOwned && !store) return;
+  // Without the store (a ticker starting the next highlight event) the frozen copy is the base;
+  // the write is computed from it now and lands when a later tick gets the lock.
+  const Event& base = store ? *store : *picture;
+  baseAngles_ = base.angles;
+  baseSpeeds_ = base.speeds;
+  baseZooms_ = base.zooms;
+  frozenBaseAngles_ = picture->angles;
+  frozenBaseSpeeds_ = picture->speeds;
+  frozenBaseZooms_ = picture->zooms;
+  passEventId_ = base.id;
+  passStoreOutUs_ = base.outUs;
   passHasBase_ = true;
 }
 
 // ponytail: a timeline edit to the same kind during a pass is overwritten by the pass's base;
 // split the base per point if that matters.
-void Player::commitPass(bool finish, int64_t toUs) {
-  const Event* store = state_.eventId ? events_.find(*state_.eventId) : nullptr;
-  if (!store) return;
+void Player::commitPass(bool finish, int64_t toUs, bool storeOwned) {
+  if (passEventId_ == 0) return;
+  bool wrote = false;
 
   if (passAngles_.active) {
+    wrote = true;
     const auto [from, to] = passRange(passAngles_, toUs);
-    const auto next = finish ? finishPass(baseAngles_, passAngles_.points, from, to, store->outUs)
-                             : splicePass(baseAngles_, passAngles_.points, from, to);
-    events_.setAngles(store->id, next);
-    if (frozen_) {
-      frozen_->angles = finish ? finishPass(frozenBaseAngles_, passAngles_.points, from, to, frozen_->outUs)
-                               : splicePass(frozenBaseAngles_, passAngles_.points, from, to);
+    auto& pending = pendingFor(passEventId_);
+    pending.angleValues = finish ? finishPass(baseAngles_, passAngles_.points, from, to, passStoreOutUs_)
+                                 : splicePass(baseAngles_, passAngles_.points, from, to);
+    pending.angles = true;
+    if (copy_) {
+      copy_->angles = finish ? finishPass(frozenBaseAngles_, passAngles_.points, from, to, copy_->outUs)
+                             : splicePass(frozenBaseAngles_, passAngles_.points, from, to);
     }
     if (finish) passAngles_ = {};
   }
   if (passSpeeds_.active) {
+    wrote = true;
     const auto [from, to] = passRange(passSpeeds_, toUs);
-    const auto next = finish ? finishPass(baseSpeeds_, passSpeeds_.points, from, to, store->outUs)
-                             : splicePass(baseSpeeds_, passSpeeds_.points, from, to);
-    events_.setSpeeds(store->id, next);
-    if (frozen_) {
-      frozen_->speeds = finish ? finishPass(frozenBaseSpeeds_, passSpeeds_.points, from, to, frozen_->outUs)
-                               : splicePass(frozenBaseSpeeds_, passSpeeds_.points, from, to);
+    auto& pending = pendingFor(passEventId_);
+    pending.speedValues = finish ? finishPass(baseSpeeds_, passSpeeds_.points, from, to, passStoreOutUs_)
+                                 : splicePass(baseSpeeds_, passSpeeds_.points, from, to);
+    pending.speeds = true;
+    if (copy_) {
+      copy_->speeds = finish ? finishPass(frozenBaseSpeeds_, passSpeeds_.points, from, to, copy_->outUs)
+                             : splicePass(frozenBaseSpeeds_, passSpeeds_.points, from, to);
     }
     if (finish) passSpeeds_ = {};
   }
   if (passZooms_.active) {
+    wrote = true;
     const auto [from, to] = passRange(passZooms_, toUs);
-    const auto next = finish ? finishPass(baseZooms_, passZooms_.points, from, to, store->outUs)
-                             : splicePass(baseZooms_, passZooms_.points, from, to);
-    events_.setZooms(store->id, next);
-    if (frozen_) {
-      frozen_->zooms = finish ? finishPass(frozenBaseZooms_, passZooms_.points, from, to, frozen_->outUs)
-                              : splicePass(frozenBaseZooms_, passZooms_.points, from, to);
+    auto& pending = pendingFor(passEventId_);
+    pending.zoomValues = finish ? finishPass(baseZooms_, passZooms_.points, from, to, passStoreOutUs_)
+                                : splicePass(baseZooms_, passZooms_.points, from, to);
+    pending.zooms = true;
+    if (copy_) {
+      copy_->zooms = finish ? finishPass(frozenBaseZooms_, passZooms_.points, from, to, copy_->outUs)
+                            : splicePass(frozenBaseZooms_, passZooms_.points, from, to);
     }
     if (finish) passZooms_ = {};
   }
+  storeDirty_ = storeDirty_ || wrote;
+  if (storeOwned) flushPending();
 }
 
-void Player::endPass() {
+void Player::endPass(bool storeOwned) {
   if (!passHasBase_) {
     passAngles_ = {};
     passSpeeds_ = {};
     passZooms_ = {};
+    if (storeOwned) flushPending();
     return;
   }
-  commitPass(true, state_.posUs);
+  commitPass(true, state_.posUs, storeOwned);
   passAngles_ = {};
   passSpeeds_ = {};
   passZooms_ = {};
@@ -171,7 +228,7 @@ void Player::recordAnglePass(const std::string& id) {
     passAngles_.points.clear();
   }
   upsert(passAngles_.points, AngleCut{state_.posUs, id});
-  commitPass(false, state_.posUs);
+  commitPass(false, state_.posUs, true);
 }
 
 void Player::recordSpeedPass(double s) {
@@ -181,7 +238,7 @@ void Player::recordSpeedPass(double s) {
     passSpeeds_.points.clear();
   }
   upsert(passSpeeds_.points, SpeedPoint{state_.posUs, s});
-  commitPass(false, state_.posUs);
+  commitPass(false, state_.posUs, true);
 }
 
 void Player::recordZoomPass(ZoomRect r) {
@@ -191,33 +248,48 @@ void Player::recordZoomPass(ZoomRect r) {
     passZooms_.points.clear();
   }
   upsert(passZooms_.points, ZoomPoint{state_.posUs, r});
-  commitPass(false, state_.posUs);
+  commitPass(false, state_.posUs, true);
 }
 
-void Player::play() {
-  auto held = lockStore();
+void Player::play(bool waitForStore) {
+  auto held = lockStore(waitForStore);
+  std::lock_guard pl(m_);
+  const bool owned = !lock_ || held.owns_lock();
+  if (owned) {
+    flushPending();
+    refreshCopy();
+  }
   state_.playing = true;
   ended_ = false;
   angleManual_ = false;
   zoomManual_ = false;
-  beginPass();
+  beginPass(owned);
 }
 
 void Player::pause() {
   auto held = lockStore();
-  endPass();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
+  endPass(true);
   state_.playing = false;
 }
 
 void Player::setDirection(int dir) {
   auto held = lockStore();
-  endPass();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
+  endPass(true);
   state_.dir = dir < 0 ? -1 : +1;
 }
 
 void Player::step(int frames) {
   auto held = lockStore();
-  endPass();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
+  endPass(true);
   state_.playing = false;
   ended_ = false;
   state_.posUs += static_cast<int64_t>(frames) * periodUs_;
@@ -228,11 +300,16 @@ void Player::step(int frames) {
 
 void Player::endRide() {
   auto held = lockStore();
-  endPass();
+  std::lock_guard pl(m_);
+  flushPending();
+  endPass(true);
 }
 
 void Player::setLever(double s) {
   auto held = lockStore();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
   if (state_.leverLocked) return;
   state_.lever = s;
   state_.overriding = true;
@@ -246,6 +323,9 @@ void Player::setLever(double s) {
 
 void Player::setSpeedPreset(double s) {
   auto held = lockStore();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
   state_.lever = s;
   state_.overriding = true;
   if (!recordCuts_ || !state_.eventId) return;
@@ -256,10 +336,16 @@ void Player::setSpeedPreset(double s) {
   }
 }
 
-void Player::lockLever(bool locked) { state_.leverLocked = locked; }
+void Player::lockLever(bool locked) {
+  std::lock_guard pl(m_);
+  state_.leverLocked = locked;
+}
 
 void Player::setAngle(const std::string& id) {
   auto held = lockStore();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
   state_.angle = id;
   if (!recordCuts_ || !state_.eventId) {
     angleManual_ = true;
@@ -274,6 +360,9 @@ void Player::setAngle(const std::string& id) {
 
 void Player::setZoom(ZoomRect r) {
   auto held = lockStore();
+  std::lock_guard pl(m_);
+  flushPending();
+  refreshCopy();
   state_.zoom = r;
   if (!recordCuts_ || !state_.eventId) {
     zoomManual_ = true;
@@ -286,13 +375,25 @@ void Player::setZoom(ZoomRect r) {
   }
 }
 
+PlayerState Player::snapshot() const {
+  std::lock_guard pl(m_);
+  return state_;
+}
+
 double Player::currentSpeed(const Event* e) const {
   if (e && !state_.overriding) return speedAt(*e, state_.posUs, state_.lever);
   return state_.lever;
 }
 
 TickResult Player::tick() {
-  auto held = lockStore();
+  std::lock_guard pl(m_);
+  std::unique_lock<std::recursive_mutex> store = tryStore();
+  const bool storeOwned = !lock_ || store.owns_lock();
+  if (storeOwned) {
+    flushPending();
+    refreshCopy();
+  }
+
   TickResult r;
   const Event* e = event();
   if (e) {
@@ -323,15 +424,15 @@ TickResult Player::tick() {
         ended_ = true;
       }
     }
-    if (state_.posUs != before && passHasBase_) commitPass(false, state_.posUs);
+    if (state_.posUs != before && passHasBase_) commitPass(false, state_.posUs, storeOwned);
   }
-  if (ended_ && passHasBase_) endPass();
+  if (ended_ && passHasBase_) endPass(storeOwned);
   r.ended = ended_;
   return r;
 }
 
 double Player::remainingSeconds() const {
-  auto held = lockStore();
+  std::lock_guard pl(m_);
   const Event* e = event();
   if (!e) return std::numeric_limits<double>::infinity();
   if (state_.posUs >= e->outUs) return 0.0;
@@ -363,14 +464,19 @@ double Player::remainingSeconds() const {
 
 void Player::restore(const PlayerState& s) {
   auto held = lockStore();
-  endPass();
+  std::lock_guard pl(m_);
+  flushPending();
+  endPass(true);
   state_ = s;
   angleManual_ = false;
   zoomManual_ = false;
-  if (freeze_ && s.eventId) {
-    if (const Event* e = events_.find(*s.eventId)) frozen_ = *e;
-  } else {
-    frozen_.reset();
+  copy_.reset();
+  copyVersion_ = 0;
+  if (s.eventId) {
+    if (const Event* e = events_.find(*s.eventId)) {
+      copy_ = *e;
+      copyVersion_ = events_.version();
+    }
   }
 }
 

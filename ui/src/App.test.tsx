@@ -118,6 +118,66 @@ test('App: S splits the primary replay at the Preview playhead', () => {
   expect(sent.angles.some((a: { tUs: number; inputId: string }) => a.inputId === 'c2' && Math.abs(a.tUs - 5_000_000) < 20_000)).toBe(true);
 });
 
+test('App: S splits on the show frame grid', () => {
+  const { client, push, pushStatus } = fakeClient();
+  render(<App client={client} />);
+  const fight: EventStore = {
+    ...store([1]),
+    events: [
+      {
+        id: 1,
+        listId: 'g1',
+        name: '',
+        tags: [],
+        angleNotes: {},
+        inUs: 0,
+        outUs: 10_000_000,
+        angles: [
+          { tUs: 0, inputId: 'c1' },
+          { tUs: 4_000_000, inputId: 'c2' },
+        ],
+        speeds: [{ tUs: 0, speed: 1 }],
+        zooms: [],
+      },
+    ],
+  };
+  push(fight);
+  pushStatus({ ...status(4_031_000), rate: { num: 50, den: 1 } });
+  fireEvent.keyDown(window, { key: 's' });
+  const sent = (client.send as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+  expect(sent.cmd).toBe('event.update');
+  expect(sent.angles.some((a: { tUs: number }) => a.tUs === 4_040_000)).toBe(true);
+});
+
+test('App: S on an existing cut sends nothing', () => {
+  const { client, push, pushStatus } = fakeClient();
+  render(<App client={client} />);
+  const fight: EventStore = {
+    ...store([1]),
+    events: [
+      {
+        id: 1,
+        listId: 'g1',
+        name: '',
+        tags: [],
+        angleNotes: {},
+        inUs: 0,
+        outUs: 10_000_000,
+        angles: [
+          { tUs: 0, inputId: 'c1' },
+          { tUs: 4_000_000, inputId: 'c2' },
+        ],
+        speeds: [{ tUs: 0, speed: 1 }],
+        zooms: [],
+      },
+    ],
+  };
+  push(fight);
+  pushStatus({ ...status(4_000_000), rate: { num: 50, den: 1 } });
+  fireEvent.keyDown(window, { key: 's' });
+  expect(client.send).not.toHaveBeenCalled();
+});
+
 test('App: Undo is disabled until the engine says it can undo', () => {
   const { client, pushStatus } = fakeClient();
   render(<App client={client} />);

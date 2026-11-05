@@ -58,6 +58,7 @@ export interface ExportState {
 
 export interface Status {
   recording: boolean;
+  rate?: { num: number; den: number };
   inputs: InputStatus[];
   disk: DiskStatus;
   alerts: Alert[];

@@ -31,10 +31,12 @@ constexpr int64_t kBase = 100'000'000;
 struct Store {
   bc::test::TempDir dir;
   std::unique_ptr<br::InputStore> store;
+  std::string id;
 
-  Store(uint32_t w, uint32_t h, const std::vector<int64_t>& times) {
+  Store(uint32_t w, uint32_t h, const std::vector<int64_t>& times, std::string inputId = "cam1")
+      : id(std::move(inputId)) {
     br::SegmentHeader header;
-    header.inputId = "cam1";
+    header.inputId = id;
     header.width = w;
     header.height = h;
     header.rate = bc::Rate{60000, 1001};
@@ -57,7 +59,7 @@ struct Store {
     }
   }
 
-  std::map<std::string, const br::InputStore*> map() const { return {{"cam1", store.get()}}; }
+  std::map<std::string, const br::InputStore*> map() const { return {{id, store.get()}}; }
 };
 
 // ---- a short H.264 recording with a long GOP and B-frames ----
@@ -333,6 +335,17 @@ TEST_CASE("FrameSource: prefetch makes the next get a cache hit") {
   CHECK(before == 4);
   REQUIRE(src.get("cam1", kBase + 3 * kStep));
   CHECK(src.diskReads() == before);
+}
+
+TEST_CASE("FrameSource: setStores drops a removed input") {
+  Store one(320, 180, {kBase});
+  Store two(320, 180, {kBase}, "cam2");
+  br::FrameSource src({{"cam1", one.store.get()}, {"cam2", two.store.get()}});
+  REQUIRE(src.get("cam2", kBase));
+  REQUIRE(src.get("cam1", kBase));
+  src.setStores({{"cam1", one.store.get()}});
+  CHECK(src.get("cam2", kBase) == nullptr);
+  CHECK(src.get("cam1", kBase) != nullptr);
 }
 
 TEST_CASE("FrameSource: the frame cache is per input") {

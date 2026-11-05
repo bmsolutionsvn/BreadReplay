@@ -15,6 +15,12 @@ std::string averr(int rc) {
 void check(int rc, const char* what) {
   if (rc < 0) throw std::runtime_error(std::string(what) + ": " + averr(rc));
 }
+
+// FFmpeg's file protocol takes UTF-8 and converts it to wide on Windows.
+std::string utf8(const std::filesystem::path& p) {
+  const auto s = p.u8string();
+  return std::string(reinterpret_cast<const char*>(s.c_str()), s.size());
+}
 }  // namespace
 
 Mp4Writer::Mp4Writer(Mp4WriterOptions options) : o_(std::move(options)) {
@@ -51,7 +57,8 @@ void Mp4Writer::open() {
 
   part_ = o_.finalPath;
   part_ += ".part";
-  check(avformat_alloc_output_context2(&fmt_, nullptr, "mp4", part_.string().c_str()),
+  const std::string partPath = utf8(part_);
+  check(avformat_alloc_output_context2(&fmt_, nullptr, "mp4", partPath.c_str()),
         "export: mp4 muxer");
   if (!fmt_) throw std::runtime_error("export: no mp4 muxer");
 
@@ -67,7 +74,7 @@ void Mp4Writer::open() {
   videoStream_->codecpar->codec_tag = 0;
   audioStream_->codecpar->codec_tag = 0;
 
-  check(avio_open(&fmt_->pb, part_.string().c_str(), AVIO_FLAG_WRITE), "export: open file");
+  check(avio_open(&fmt_->pb, partPath.c_str(), AVIO_FLAG_WRITE), "export: open file");
   AVDictionary* opts = nullptr;
   av_dict_set(&opts, "movflags", "+faststart", 0);
   const int rc = avformat_write_header(fmt_, &opts);

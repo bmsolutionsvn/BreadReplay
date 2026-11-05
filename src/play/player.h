@@ -35,9 +35,11 @@ class Player {
   Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze = false,
          std::recursive_mutex* storeLock = nullptr);
   void cue(int eventId);
-  void cueCopy(const Event& e);
+  // waitForStore=false is for the ticker: the cue/play still happens from the copy, and any
+  // pending pass write lands on the next tick that gets the command lock.
+  void cueCopy(const Event& e, bool waitForStore = true);
   void cueAt(int64_t t, const std::string& angle);
-  void play();
+  void play(bool waitForStore = true);
   void pause();
   void setDirection(int dir);
   void step(int frames);  // ± show periods, pauses
@@ -48,10 +50,11 @@ class Player {
   void setZoom(ZoomRect r);
   TickResult tick();  // advance by one show period
   double remainingSeconds() const;  // to Out; +inf at speed 0
-  const PlayerState& state() const { return state_; }
+  const PlayerState& state() const { return state_; }  // single-threaded tests only
+  PlayerState snapshot() const;                        // a copy under the player mutex
   void restore(const PlayerState&);
   void endRide();  // finish a live-riding pass without changing play state
-  // The event this player reads: a copy when frozen or cued from one, else the store.
+  // The event this player plays: the same copy tick() reads.
   const Event* event() const;
 
  private:
@@ -70,12 +73,24 @@ class Player {
     int64_t fromUs = 0;
     std::vector<ZoomPoint> points;
   };
+  // The pass write a tick computed while the command lock was busy.
+  struct PendingWrites {
+    int eventId = 0;
+    bool angles = false, speeds = false, zooms = false;
+    std::vector<AngleCut> angleValues;
+    std::vector<SpeedPoint> speedValues;
+    std::vector<ZoomPoint> zoomValues;
+  };
 
   double currentSpeed(const Event* e) const;
-  std::unique_lock<std::recursive_mutex> lockStore() const;
-  void beginPass();
-  void endPass();
-  void commitPass(bool finish, int64_t toUs);
+  std::unique_lock<std::recursive_mutex> lockStore(bool wait = true) const;
+  std::unique_lock<std::recursive_mutex> tryStore() const;
+  void refreshCopy();   // requires the store lock
+  void flushPending();  // requires the store lock
+  PendingWrites& pendingFor(int eventId);
+  void beginPass(bool storeOwned);
+  void endPass(bool storeOwned = true);
+  void commitPass(bool finish, int64_t toUs, bool storeOwned);
   void recordAnglePass(const std::string& id);
   void recordSpeedPass(double s);
   void recordZoomPass(ZoomRect r);
@@ -85,9 +100,15 @@ class Player {
   bool recordCuts_ = true;
   bool freeze_ = false;
   std::recursive_mutex* lock_ = nullptr;
+  mutable std::mutex m_;  // state_, copy_, pass state; never held while blocking on lock_
   PlayerState state_;
   bool ended_ = false;
-  std::optional<Event> frozen_;
+  std::optional<Event> copy_;
+  uint64_t copyVersion_ = 0;
+  bool storeDirty_ = false;
+  std::vector<PendingWrites> pending_;
+  int passEventId_ = 0;
+  int64_t passStoreOutUs_ = 0;
   bool angleManual_ = false;
   bool zoomManual_ = false;
   bool passHasBase_ = false;

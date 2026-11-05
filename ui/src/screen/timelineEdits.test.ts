@@ -89,13 +89,13 @@ test('moveBlock: both cuts move and the clamp keeps the block length', () => {
 });
 
 test('split: adds a cut at the frame and ignores an existing one', () => {
-  expect(split(ev, 5_049_999).angles).toEqual([
+  expect(split(ev, 5_049_999, 100_000).angles).toEqual([
     { tUs: 0, inputId: 'c1' },
     { tUs: 4_000_000, inputId: 'c2' },
     { tUs: 5_000_000, inputId: 'c2' },
     { tUs: 7_000_000, inputId: 'c3' },
   ]);
-  expect(split(ev, 4_000_000).angles).toEqual(ev.angles);
+  expect(split(ev, 4_000_000, 100_000).angles).toEqual(ev.angles);
 });
 
 test('deleteBlock: removes a cut, or gives block 0 the next camera', () => {

@@ -38,15 +38,15 @@ ZoomRect zoomFromJson(const nlohmann::json& j) {
 
 int64_t CommandRouter::markTime(bool lastN) const {
   if (lastN) return engine_.newestTs();
-  Player& preview = engine_.playerFor("preview");
+  const auto preview = engine_.playerFor("preview").snapshot();
   const int64_t newest = engine_.newestTs();
   // At the live edge a mark means now; while reviewing it means Preview's position.
-  if (newest > 0 && std::llabs(preview.state().posUs - newest) <= 1'000'000) return newest;
-  return preview.state().posUs;
+  if (newest > 0 && std::llabs(preview.posUs - newest) <= 1'000'000) return newest;
+  return preview.posUs;
 }
 
 std::string CommandRouter::markAngle() const {
-  const auto angle = engine_.playerFor("preview").state().angle;
+  const auto angle = engine_.playerFor("preview").snapshot().angle;
   if (!angle.empty()) return angle;
   const auto& inputs = engine_.show().inputs;
   return inputs.empty() ? std::string("cam1") : inputs.front().id;
@@ -61,7 +61,7 @@ bool CommandRouter::isEdit(const std::string& name, const nlohmann::json& cmd) c
   }
   // Riding while a replay plays is part of that pass, not an edit of its own.
   if (name == "player.lever" || name == "player.preset" || name == "player.zoom") {
-    return !engine_.playerFor(cmd.value("player", std::string("preview"))).state().playing;
+    return !engine_.playerFor(cmd.value("player", std::string("preview"))).snapshot().playing;
   }
   return false;
 }
@@ -70,7 +70,7 @@ bool CommandRouter::isRide(const std::string& name, const nlohmann::json&, const
   if (name == "take" || name == "highlight.play" || name == "player.play") return true;
   if (name == "player.angle" || name == "player.lever" || name == "player.preset" ||
       name == "player.zoom") {
-    return engine_.playerFor(who).state().playing;
+    return engine_.playerFor(who).snapshot().playing;
   }
   return false;
 }
@@ -414,7 +414,7 @@ nlohmann::json CommandRouter::handleImpl(const nlohmann::json& cmd) {
       } else if (name == "player.live") {
         // Back to the live edge on the angle the operator is on (the first input if none yet).
         const auto& inputs = engine_.show().inputs;
-        std::string angle = engine_.playerFor("preview").state().angle;
+        std::string angle = engine_.playerFor("preview").snapshot().angle;
         if (angle.empty() && !inputs.empty()) angle = inputs.front().id;
         engine_.playerFor("preview").cueAt(engine_.newestTs(), angle);
       } else {

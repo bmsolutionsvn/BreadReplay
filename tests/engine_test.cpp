@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <future>
 #include <memory>
 #include <thread>
 
@@ -80,6 +81,14 @@ TEST_CASE("Engine: status carries the saved hotkeys") {
   show.settings.hotkeys["mark.in"] = "J";
   br::Engine engine(f.depsMakers(), show, f.dir.path / "show");
   CHECK(engine.statusJson()["hotkeys"]["mark.in"] == "J");
+}
+
+TEST_CASE("Engine: status carries the show rate") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(0), f.dir.path / "show");
+  const auto s = engine.statusJson();
+  CHECK(s["rate"]["num"] == 30);
+  CHECK(s["rate"]["den"] == 1);
 }
 
 TEST_CASE("Engine: two file inputs record 3 s each") {
@@ -317,6 +326,58 @@ TEST_CASE("Engine: an OMT-HX recording cues and reverses without encoding"
   CHECK(decoded <= 60);  // one GOP's worth per seek
 }
 #endif
+
+TEST_CASE("Engine: opening a show while status runs does not hang") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(4), f.dir.path / "show");
+  engine.setSender([](const std::string&) {}, [](const std::vector<uint8_t>&) {});
+  engine.start();
+  for (int i = 0; i < 10; ++i) {
+    auto call = std::async(std::launch::async, [&] {
+      return engine.handle({{"cmd", "show.new"}, {"name", "S"}, {"folder", f.dir.path.string()}});
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));  // one status tick lands inside
+    const bool done = call.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+    CHECK(done);
+    if (!done) {
+      std::thread([c = std::move(call)]() mutable { c.wait(); }).detach();
+      return;
+    }
+    CHECK(call.get().at("ok").get<bool>());
+  }
+  engine.stop();
+}
+
+TEST_CASE("Engine: removing and re-adding an input while Output plays does not crash") {
+  Fixture f;
+  br::Show show = f.makeShow(2);
+  const br::ShowInput second = show.inputs[1];
+  br::Engine engine(f.depsMakers(), std::move(show), f.dir.path / "show");
+  engine.start();
+  REQUIRE(f.waitFor([&] { return engine.newestTs() > 2'000'000; }, 30000));
+  const int id = engine.handle({{"cmd", "mark.lastN"}, {"n", 2}}).at("id").get<int>();
+  REQUIRE(engine.handle({{"cmd", "highlight.play"}, {"ids", nlohmann::json::array({id})}})
+              .at("ok")
+              .get<bool>());
+  REQUIRE(engine.outputPlayer());
+  const uint64_t before = engine.outputPlayer()->ticks();
+  for (int i = 0; i < 20; ++i) {
+    CHECK(engine.handle({{"cmd", "input.remove"}, {"id", second.id}}).at("ok").get<bool>());
+    CHECK(engine
+              .handle({{"cmd", "input.add"},
+                       {"id", second.id},
+                       {"name", second.name},
+                       {"kind", second.input.kind},
+                       {"params", second.input.params}})
+              .at("ok")
+              .get<bool>());
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (engine.outputPlayer()->ticks() == before && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  CHECK(engine.outputPlayer()->ticks() > before);
+  engine.stop();
+}
 
 TEST_CASE("Engine: an SRT packet's colour space becomes the stored hint") {
   CHECK(br::srtColour(AVCOL_SPC_BT709) == br::StoredColour::Bt709);
