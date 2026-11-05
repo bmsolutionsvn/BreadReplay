@@ -78,6 +78,28 @@ int ExportQueue::add(ExportJob job) {
   return entries_.back().state.id;
 }
 
+void ExportQueue::setStores(std::map<std::string, const InputStore*> stores, bool stopRunning) {
+  int stopId = 0;
+  {
+    std::lock_guard lock(m_);
+    stores_ = std::move(stores);
+    if (!stopRunning) return;
+    for (const auto& e : entries_) {
+      if (e.state.state == "running") stopId = e.state.id;
+    }
+    stopId_ = stopId;
+  }
+  if (!stopId) return;
+  std::unique_lock lock(m_);
+  cv_.wait(lock, [&] {
+    for (const auto& e : entries_) {
+      if (e.state.id == stopId) return e.state.state != "running";
+    }
+    return true;  // already finished and trimmed out of the list
+  });
+  if (stopId_.load() == stopId) stopId_ = 0;
+}
+
 void ExportQueue::cancel(int id) {
   {
     std::lock_guard lock(m_);
@@ -167,7 +189,12 @@ void ExportQueue::runJob(const Entry& entry) {
     auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
     bc::TexturePool pool(*gpu);
     bc::Converter conv(*gpu, pool);
-    FrameSource src(stores_, gpu.get(), &pool, 2);
+    std::map<std::string, const InputStore*> stores;
+    {
+      std::lock_guard lock(m_);
+      stores = stores_;  // the job's stores are fixed when it starts
+    }
+    FrameSource src(stores, gpu.get(), &pool, 2);
     Renderer renderer(*gpu, pool, conv, settings_.outW, settings_.outH);
     Player player(store, settings_.rate, false, true);
     OutputPlayer op(player, src, renderer, store, settings_);
@@ -188,9 +215,11 @@ void ExportQueue::runJob(const Entry& entry) {
     // ponytail: frames go GPU -> CPU BGRA -> NV12 (swscale); a GPU NV12 path if export speed matters.
     int64_t done = 0;
     bool cancelled = false;
+    bool stoppedForInputs = false;
     while (!op.idle()) {
-      if (stopping_ || cancelId_.load() == id) {
+      if (stopping_ || cancelId_.load() == id || stopId_.load() == id) {
         cancelled = true;
+        stoppedForInputs = stopId_.load() == id;
         break;
       }
       if (raw->error()) {
@@ -204,7 +233,12 @@ void ExportQueue::runJob(const Entry& entry) {
     }
     if (cancelled) {
       raw->abort();
-      finishEntry(id, "cancelled", {}, 0);
+      if (stoppedForInputs) {
+        stopId_ = 0;
+        finishEntry(id, "failed", "an input changed while it was exporting", 0);
+      } else {
+        finishEntry(id, "cancelled", {}, 0);
+      }
       return;
     }
     raw->finish();
@@ -246,24 +280,27 @@ bool ExportQueue::isFinal(const std::string& state) const {
 
 void ExportQueue::finishEntry(int id, const std::string& state, const std::string& error,
                               double progress) {
-  std::lock_guard lock(m_);
-  for (auto& e : entries_) {
-    if (e.state.id != id) continue;
-    e.state.state = state;
-    e.state.error = error;
-    e.state.progress = progress;
-    break;
-  }
-  int finished = 0;
-  for (const auto& e : entries_) finished += isFinal(e.state.state) ? 1 : 0;
-  for (auto it = entries_.begin(); it != entries_.end() && finished > 5;) {
-    if (isFinal(it->state.state)) {
-      it = entries_.erase(it);
-      --finished;
-    } else {
-      ++it;
+  {
+    std::lock_guard lock(m_);
+    for (auto& e : entries_) {
+      if (e.state.id != id) continue;
+      e.state.state = state;
+      e.state.error = error;
+      e.state.progress = progress;
+      break;
+    }
+    int finished = 0;
+    for (const auto& e : entries_) finished += isFinal(e.state.state) ? 1 : 0;
+    for (auto it = entries_.begin(); it != entries_.end() && finished > 5;) {
+      if (isFinal(it->state.state)) {
+        it = entries_.erase(it);
+        --finished;
+      } else {
+        ++it;
+      }
     }
   }
+  cv_.notify_all();  // setStores waits here for the job it stopped
 }
 
 }  // namespace br

@@ -35,6 +35,8 @@ CleanupStatus CleanupRunner::status() const {
   return status_;
 }
 
+size_t CleanupRunner::storeCount() const { return stores_.size(); }
+
 void CleanupRunner::stop() {
   stopping_ = true;
   if (thread_.joinable()) thread_.join();

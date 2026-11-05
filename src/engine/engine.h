@@ -102,6 +102,7 @@ class Engine {
   // For tests and the current-list highlight.
   OutputPlayer* outputPlayer() { return outputPlayer_.get(); }
   ExportQueue* exportQueue() { return exportQueue_.get(); }
+  size_t cleanupStoreCount() const;  // for tests: stores the cleanup runner holds, 0 without one
   const InputStore* store(const std::string& id) const;
   RecorderStats recorderStats(const std::string& id);
   const FrameSource* frameSource() const { return source_.get(); }

@@ -32,6 +32,7 @@ class CleanupRunner {
 
   bool start();  // false while a run is already going
   CleanupStatus status() const;
+  size_t storeCount() const;  // for tests: how many stores this runner holds
   void stop();
 
  private:

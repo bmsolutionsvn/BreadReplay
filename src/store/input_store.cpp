@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <ctime>
 #include <cstring>
+#include <set>
 #include <stdexcept>
 
 namespace br {
@@ -37,28 +38,35 @@ InputStore::InputStore(std::filesystem::path dir, SegmentHeader proto)
   std::filesystem::create_directories(dir_);
   periodUs_ = proto_.rate.fps() > 0 ? static_cast<int64_t>(1'000'000.0 / proto_.rate.fps() + 0.5) : 33'333;
 
-  // A swap that crashed between renames leaves .old files: put them back when the base is gone.
-  // A rewrite that crashed leaves .cleanup files: the original is still whole, so drop them.
-  std::vector<std::filesystem::path> olds, strays;
+  // A swap that crashed between renames leaves .old files: restore the pair, or drop them when
+  // the swap had already finished. A rewrite that crashed leaves .cleanup files: the original is
+  // still whole, so drop them.
+  std::set<std::filesystem::path> oldBases;
+  std::vector<std::filesystem::path> strays;
   for (const auto& e : std::filesystem::directory_iterator(dir_)) {
     if (!e.is_regular_file()) continue;
     const std::string name = e.path().filename().string();
     if (endsWith(name, ".old.vmxs") || endsWith(name, ".old.vmxi")) {
-      olds.push_back(e.path());
+      const std::string suffix = endsWith(name, ".old.vmxs") ? ".old.vmxs" : ".old.vmxi";
+      oldBases.insert(dir_ / name.substr(0, name.size() - suffix.size()));
     } else if (endsWith(name, ".cleanup.vmxs") || endsWith(name, ".cleanup.vmxi")) {
       strays.push_back(e.path());
     }
   }
-  for (const auto& old : olds) {
-    const std::string s = old.string();
-    const std::string suffix = endsWith(s, ".old.vmxs") ? ".old.vmxs" : ".old.vmxi";
-    const std::string target = s.substr(0, s.size() - suffix.size()) + suffix.substr(4);
+  for (const auto& base : oldBases) {
+    const auto essence = std::filesystem::path(base.string() + ".vmxs");
+    const auto index = std::filesystem::path(base.string() + ".vmxi");
+    const auto oldEssence = std::filesystem::path(base.string() + ".old.vmxs");
+    const auto oldIndex = std::filesystem::path(base.string() + ".old.vmxi");
     std::error_code ec;
-    if (!std::filesystem::exists(target)) {
-      std::filesystem::rename(old, target, ec);
-    } else {
-      std::filesystem::remove(old, ec);
+    if (std::filesystem::exists(essence) && std::filesystem::exists(index)) {
+      std::filesystem::remove(oldEssence, ec);  // the swap finished before the crash
+      std::filesystem::remove(oldIndex, ec);
+      continue;
     }
+    // The swap stopped part-way: the original pair is the only whole copy, so put it back.
+    if (std::filesystem::exists(oldEssence)) std::filesystem::rename(oldEssence, essence, ec);
+    if (std::filesystem::exists(oldIndex)) std::filesystem::rename(oldIndex, index, ec);
   }
   for (const auto& stray : strays) {
     std::error_code ec;
@@ -248,23 +256,45 @@ bool InputStore::replaceSegment(const std::filesystem::path& base,
     if (s.base != base) continue;
     if (s.writer) return false;  // the open segment keeps recording
     s.reader.reset();
+    const auto essence = std::filesystem::path(base.string() + ".vmxs");
+    const auto index = std::filesystem::path(base.string() + ".vmxi");
     const auto oldEssence = std::filesystem::path(base.string() + ".old.vmxs");
     const auto oldIndex = std::filesystem::path(base.string() + ".old.vmxi");
+    const auto newEssence = std::filesystem::path(newBase.string() + ".vmxs");
+    const auto newIndex = std::filesystem::path(newBase.string() + ".vmxi");
     std::error_code ec;
     std::filesystem::remove(oldEssence, ec);
     std::filesystem::remove(oldIndex, ec);
-    std::filesystem::rename(std::filesystem::path(base.string() + ".vmxs"), oldEssence);
-    std::filesystem::rename(std::filesystem::path(base.string() + ".vmxi"), oldIndex);
-    std::filesystem::rename(std::filesystem::path(newBase.string() + ".vmxs"),
-                            std::filesystem::path(base.string() + ".vmxs"));
-    std::filesystem::rename(std::filesystem::path(newBase.string() + ".vmxi"),
-                            std::filesystem::path(base.string() + ".vmxi"));
+    const std::pair<std::filesystem::path, std::filesystem::path> moves[] = {
+        {essence, oldEssence}, {index, oldIndex}, {newEssence, essence}, {newIndex, index}};
+    int done = 0;
+    for (const auto& [from, to] : moves) {
+      std::error_code e;
+      std::filesystem::rename(from, to, e);
+      if (e) break;
+      ++done;
+    }
+    const bool swapped = done == 4;
+    if (!swapped) {
+      // A rename can fail while an antivirus or the indexer holds a file: put the pair back so
+      // the original stays readable without a restart.
+      for (int i = done; i-- > 0;) {
+        std::error_code e;
+        std::filesystem::rename(moves[i].second, moves[i].first, e);
+      }
+      std::error_code e;
+      std::filesystem::remove(newEssence, e);
+      std::filesystem::remove(newIndex, e);
+    }
     auto r = SegmentReader::open(base);
     s.reader = std::make_unique<SegmentReader>(r ? std::move(*r) : SegmentReader{});
     s.times.clear();
     for (const auto& rec : s.reader->records()) s.times.push_back(rec.tsUs);
-    s.bytes = static_cast<int64_t>(std::filesystem::file_size(std::filesystem::path(base.string() + ".vmxs"))) +
-              static_cast<int64_t>(std::filesystem::file_size(std::filesystem::path(base.string() + ".vmxi")));
+    std::error_code sizeEc;
+    const auto essenceSize = std::filesystem::file_size(essence, sizeEc);
+    const auto indexSize = std::filesystem::file_size(index, sizeEc);
+    s.bytes = sizeEc ? 0 : static_cast<int64_t>(essenceSize + indexSize);
+    if (!swapped) return false;
     std::filesystem::remove(oldEssence, ec);
     std::filesystem::remove(oldIndex, ec);
     ++generation_;

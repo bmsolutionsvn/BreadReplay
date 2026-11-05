@@ -1,4 +1,5 @@
 #include <doctest/doctest.h>
+#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -186,6 +187,57 @@ TEST_CASE("Cleanup: a store left mid-swap recovers on load") {
   CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxi"));
   CHECK_FALSE(std::filesystem::exists(stray.string() + ".cleanup.vmxs"));
   CHECK_FALSE(std::filesystem::exists(stray.string() + ".cleanup.vmxi"));
+}
+
+TEST_CASE("Cleanup: a store left after the third swap rename keeps the original") {
+  bc::test::TempDir dir;
+  const int64_t base = noon();
+  std::filesystem::path segmentBase;
+  std::filesystem::path newBase;
+  size_t n = 0;
+  {
+    br::InputStore store(dir.path, proto());
+    record(store, base, 20);
+    segmentBase = store.segments()[0].base;
+    n = recordsOf(segmentBase).size();
+    newBase = br::rewriteSegment(segmentBase, std::vector<br::ProtectedRange>{{base, base + 500'000}});
+  }
+  std::filesystem::rename(segmentBase.string() + ".vmxs", segmentBase.string() + ".old.vmxs");
+  std::filesystem::rename(segmentBase.string() + ".vmxi", segmentBase.string() + ".old.vmxi");
+  std::filesystem::rename(newBase.string() + ".vmxs", segmentBase.string() + ".vmxs");
+
+  br::InputStore reopened(dir.path, proto());
+  CHECK(recordsOf(segmentBase).size() == n);
+  CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxs"));
+  CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxi"));
+  CHECK_FALSE(std::filesystem::exists(newBase.string() + ".vmxs"));
+  CHECK_FALSE(std::filesystem::exists(newBase.string() + ".vmxi"));
+}
+
+TEST_CASE("Cleanup: a swap that cannot finish leaves the original readable") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  const int64_t base = noon();
+  record(store, base, 20);
+  const auto segmentBase = store.segments()[0].base;
+  const size_t n = recordsOf(segmentBase).size();
+  const auto newBase = br::rewriteSegment(segmentBase, std::vector<br::ProtectedRange>{{base, base + 500'000}});
+
+  const auto heldPath = std::filesystem::path(newBase.string() + ".vmxi");
+  HANDLE held = CreateFileW(heldPath.wstring().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
+  REQUIRE(held != INVALID_HANDLE_VALUE);
+  CHECK_FALSE(store.replaceSegment(segmentBase, newBase));
+
+  const auto ref = store.find(base + 1'000'000);
+  REQUIRE(ref.has_value());
+  CHECK_FALSE(store.readVideo(*ref, false).empty());
+  CHECK(recordsOf(segmentBase).size() == n);
+  CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxs"));
+  CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxi"));
+
+  CloseHandle(held);
+  CHECK_FALSE(std::filesystem::exists(newBase.string() + ".vmxs"));
 }
 TEST_CASE("Cleanup: the runner frees what the plan said") {
   bc::test::TempDir unusedDir;

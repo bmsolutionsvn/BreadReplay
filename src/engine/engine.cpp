@@ -502,8 +502,13 @@ void Engine::addInput(const ShowInput& in) {
   show_.inputs.push_back(in);
   if (started_) {
     buildInputs();
+    rebuildCleanupRunner();
     rebuildFrameSource();
-    rebuildExportQueue();
+    if (exportQueue_) {
+      std::map<std::string, const InputStore*> map;
+      for (const auto& [id, store] : stores_) map[id] = store.get();
+      exportQueue_->setStores(std::move(map), false);
+    }
     // Start only the input just added: starting them all would start a running one twice.
     if (recording_ && isNew) {
       if (auto it = inputs_.find(in.id); it != inputs_.end() && it->second) {
@@ -519,7 +524,15 @@ void Engine::updateInput(const ShowInput& in) {
 }
 
 void Engine::removeInput(const std::string& id) {
-  stopExportQueue();  // before the store it reads goes away
+  if (cleanup_) cleanup_->stop();  // the runner must not outlive a store it rewrites
+  if (exportQueue_) {
+    std::map<std::string, const InputStore*> map;
+    for (const auto& [storeId, store] : stores_) {
+      if (storeId != id) map[storeId] = store.get();
+    }
+    // Before the store it reads goes away: a running export ends with a reason, the rest stay.
+    exportQueue_->setStores(std::move(map), true);
+  }
   if (auto it = inputs_.find(id); it != inputs_.end() && it->second) it->second->stop();
   inputs_.erase(id);
   sinks_.erase(id);
@@ -537,7 +550,7 @@ void Engine::removeInput(const std::string& id) {
   if (started_) {
     rebuildFrameSource();
     removedStore.reset();
-    rebuildExportQueue();
+    rebuildCleanupRunner();
   }
 }
 
@@ -564,6 +577,8 @@ const InputStore* Engine::store(const std::string& id) const {
   auto it = stores_.find(id);
   return it == stores_.end() ? nullptr : it->second.get();
 }
+
+size_t Engine::cleanupStoreCount() const { return cleanup_ ? cleanup_->storeCount() : 0; }
 
 void Engine::saveShow() {
   std::lock_guard lock(cmdM_);
