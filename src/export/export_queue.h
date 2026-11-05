@@ -40,6 +40,9 @@ class ExportQueue {
   ExportQueue& operator=(const ExportQueue&) = delete;
 
   int add(ExportJob job);
+  // Replaces the stores a job reads. With stopRunning, a running job ends "failed" with a reason;
+  // queued and finished entries stay.
+  void setStores(std::map<std::string, const InputStore*> stores, bool stopRunning);
   void cancel(int id);
   std::vector<ExportState> states() const;  // queued/running plus the last 5 finished
   // In − 3 s … Out + 3 s of every event in queued and running jobs.
@@ -69,6 +72,7 @@ class ExportQueue {
   std::thread thread_;
   std::atomic<bool> stopping_{false};
   std::atomic<int> cancelId_{0};
+  std::atomic<int> stopId_{0};  // a running job to end as failed because its stores changed
 };
 
 }  // namespace br

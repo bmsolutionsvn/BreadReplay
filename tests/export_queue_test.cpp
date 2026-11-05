@@ -355,6 +355,57 @@ TEST_CASE("Export: cancel leaves no file" BC_REQUIRES(bc::test::Req::H264Encoder
   CHECK_FALSE(std::filesystem::exists(final.string() + ".part"));
 }
 
+TEST_CASE("Export: removing an input stops only the running export, with a reason"
+          BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  Fixture f;
+  const int a = f.makeLong(30);
+  const int b = f.makeLong(30);
+  const auto finalA = f.dir.path / "a.mp4";
+  const auto finalB = f.dir.path / "b.mp4";
+  br::ExportQueue q(f.stores, f.settings);
+  const int jobA = q.add(jobFor(f, {a}, finalA));
+  const int jobB = q.add(jobFor(f, {b}, finalB));
+
+  bool started = false;
+  for (int i = 0; i < 2000 && !started; ++i) {
+    for (const auto& s : q.states()) {
+      if (s.id == jobA && s.state == "running" && s.progress > 0) started = true;
+    }
+    if (!started) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  REQUIRE(started);
+
+  q.setStores(f.stores, true);
+  const auto stateA = waitFor(q, jobA, std::chrono::seconds(5));
+  CHECK(stateA.state == "failed");
+  CHECK(stateA.error == "an input changed while it was exporting");
+  CHECK_FALSE(std::filesystem::exists(finalA));
+  CHECK_FALSE(std::filesystem::exists(finalA.string() + ".part"));
+  CHECK(q.states().size() == 2);
+  CHECK(waitFor(q, jobB, std::chrono::seconds(60)).state == "done");
+}
+
+TEST_CASE("Export: adding an input does not stop the running export"
+          BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  Fixture f;
+  const int id = f.makeLong(10);
+  const auto final = f.dir.path / "add.mp4";
+  br::ExportQueue q(f.stores, f.settings);
+  const int job = q.add(jobFor(f, {id}, final));
+
+  bool started = false;
+  for (int i = 0; i < 2000 && !started; ++i) {
+    for (const auto& s : q.states()) {
+      if (s.id == job && s.state == "running" && s.progress > 0) started = true;
+    }
+    if (!started) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  REQUIRE(started);
+
+  q.setStores(f.stores, false);
+  CHECK(waitFor(q, job, std::chrono::seconds(60)).state == "done");
+}
+
 TEST_CASE("Export: an unwritable folder fails with a reason"
           BC_REQUIRES(bc::test::Req::H264Encoder)) {
   Fixture f;
