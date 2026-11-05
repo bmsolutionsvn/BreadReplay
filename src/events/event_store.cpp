@@ -298,7 +298,11 @@ std::vector<ProtectedRange> EventStore::protectedRanges() const {
 
 void EventStore::restoreFrom(const EventStore& snap) {
   const uint64_t old = version_;
+  const int nextId = std::max(nextId_, snap.nextId_);
+  const int nextListId = std::max(nextListId_, snap.nextListId_);
   *this = snap;
+  nextId_ = nextId;
+  nextListId_ = nextListId;
   version_ = std::max(old, snap.version_) + 1;
 }
 

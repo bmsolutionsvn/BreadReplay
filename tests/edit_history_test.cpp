@@ -21,6 +21,18 @@ TEST_CASE("History: undo and redo restore the store") {
   CHECK_FALSE(h.redo(s));
 }
 
+TEST_CASE("History: a mark after an undo gets a new id") {
+  br::EventStore s;
+  br::EditHistory h;
+  h.record(s);
+  const int first = s.lastN(100 * kS, 1 * kS, "cam1").id;
+  CHECK(h.undo(s));
+  const int again = s.lastN(200 * kS, 1 * kS, "cam1").id;
+  CHECK(first == 1);
+  CHECK(again == 2);
+  CHECK(s.find(first) == nullptr);
+}
+
 TEST_CASE("History: keeps at most 200 steps and a new edit clears redo") {
   br::EventStore s;
   br::EditHistory h;
