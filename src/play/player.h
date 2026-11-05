@@ -35,9 +35,11 @@ class Player {
   Player(EventStore& events, bc::Rate showRate, bool recordCuts, bool freeze = false,
          std::recursive_mutex* storeLock = nullptr);
   void cue(int eventId);
-  void cueCopy(const Event& e);
+  // waitForStore=false is for the ticker: the cue/play still happens from the copy, and any
+  // pending pass write lands on the next tick that gets the command lock.
+  void cueCopy(const Event& e, bool waitForStore = true);
   void cueAt(int64_t t, const std::string& angle);
-  void play();
+  void play(bool waitForStore = true);
   void pause();
   void setDirection(int dir);
   void step(int frames);  // ± show periods, pauses
@@ -73,6 +75,7 @@ class Player {
   };
   // The pass write a tick computed while the command lock was busy.
   struct PendingWrites {
+    int eventId = 0;
     bool angles = false, speeds = false, zooms = false;
     std::vector<AngleCut> angleValues;
     std::vector<SpeedPoint> speedValues;
@@ -80,11 +83,12 @@ class Player {
   };
 
   double currentSpeed(const Event* e) const;
-  std::unique_lock<std::recursive_mutex> lockStore() const;
+  std::unique_lock<std::recursive_mutex> lockStore(bool wait = true) const;
   std::unique_lock<std::recursive_mutex> tryStore() const;
   void refreshCopy();   // requires the store lock
   void flushPending();  // requires the store lock
-  void beginPass();
+  PendingWrites& pendingFor(int eventId);
+  void beginPass(bool storeOwned);
   void endPass(bool storeOwned = true);
   void commitPass(bool finish, int64_t toUs, bool storeOwned);
   void recordAnglePass(const std::string& id);
@@ -102,7 +106,7 @@ class Player {
   std::optional<Event> copy_;
   uint64_t copyVersion_ = 0;
   bool storeDirty_ = false;
-  PendingWrites pending_;
+  std::vector<PendingWrites> pending_;
   int passEventId_ = 0;
   int64_t passStoreOutUs_ = 0;
   bool angleManual_ = false;

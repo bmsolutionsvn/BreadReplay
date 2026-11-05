@@ -829,23 +829,22 @@ void Engine::statusLoop() {
       // try: stop() joins this thread while holding cmdM_, so it must never wait for cmdM_.
       std::unique_lock cmdLock(cmdM_, std::try_to_lock);
       if (!cmdLock.owns_lock()) continue;
-      sendText_(statusJson().dump());
+      auto status = statusJson();
       // The workspace survives a crash: events and settings reach show.json within a few seconds.
       const int64_t t = now();
       if (t - lastSaveUs_ > 5'000'000) {
         lastSaveUs_ = t;
         saveShow();
       }
+      std::optional<nlohmann::json> events;
       const uint64_t version = show_.events.version();
       if (version != eventsVersionSent_) {
         eventsVersionSent_ = version;
-        nlohmann::json e;
-        e["type"] = "events";
-        e["version"] = version;
-        e["events"] = show_.events.toJson();
-        cmdLock.unlock();  // and never take cmdM_ again this tick
-        sendText_(e.dump());
+        events = {{"type", "events"}, {"version", version}, {"events", show_.events.toJson()}};
       }
+      cmdLock.unlock();  // and never take cmdM_ again this tick
+      sendText_(status.dump());
+      if (events) sendText_(events->dump());
     } catch (const std::exception&) {
     }
   }

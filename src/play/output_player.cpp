@@ -62,8 +62,8 @@ void OutputPlayer::advanceHighlight() {
   fadeElapsedUs_ = 0;
   ++highlightIndex_;
   if (highlightIndex_ < highlight_.size()) {
-    player_.cueCopy(highlight_[highlightIndex_]);
-    player_.play();
+    player_.cueCopy(highlight_[highlightIndex_], /*waitForStore=*/false);
+    player_.play(/*waitForStore=*/false);
   } else {
     playingHighlight_ = false;
   }
