@@ -41,6 +41,7 @@ add_library(br_core STATIC
   src/store/segment.cpp
   src/store/input_store.cpp
   src/store/retention.cpp
+  src/store/cleanup.cpp
   src/record/recorder.cpp
   src/events/event_store.cpp
   src/events/edit_history.cpp
@@ -86,6 +87,7 @@ add_executable(br_tests
   tests/segment_test.cpp
   tests/input_store_test.cpp
   tests/retention_test.cpp
+  tests/cleanup_test.cpp
   tests/recorder_test.cpp
   tests/event_store_test.cpp
   tests/edit_history_test.cpp
