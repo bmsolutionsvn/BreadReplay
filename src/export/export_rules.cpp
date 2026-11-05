@@ -37,7 +37,14 @@ std::string stamp(const std::tm& t) {
 
 bool taken(const std::filesystem::path& p) {
   std::error_code ec;
-  return std::filesystem::exists(p, ec) || std::filesystem::exists(p.string() + ".part", ec);
+  auto part = p;
+  part += ".part";
+  return std::filesystem::exists(p, ec) || std::filesystem::exists(part, ec);
+}
+
+// Names arrive as UTF-8 but path(narrow) goes through the ANSI code page on Windows.
+std::filesystem::path utf8Path(const std::string& s) {
+  return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 }  // namespace
 
@@ -65,8 +72,8 @@ std::string sanitizeFileName(std::string name) {
 std::filesystem::path exportPath(const std::filesystem::path& folder, const std::string& name,
                                  const std::tm& local) {
   const std::string base = sanitizeFileName(name) + " - " + stamp(local);
-  std::filesystem::path p = folder / (base + ".mp4");
-  for (int n = 2; taken(p); ++n) p = folder / (base + " (" + std::to_string(n) + ").mp4");
+  std::filesystem::path p = folder / utf8Path(base + ".mp4");
+  for (int n = 2; taken(p); ++n) p = folder / utf8Path(base + " (" + std::to_string(n) + ").mp4");
   return p;
 }
 

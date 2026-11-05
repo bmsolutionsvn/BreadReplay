@@ -108,6 +108,21 @@ TEST_CASE("Mp4Writer: writes H.264 + AAC and renames on finish" BC_REQUIRES(bc::
   CHECK(p.audioChannels == 2);
 }
 
+TEST_CASE("Mp4Writer: a Vietnamese folder and name work" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::test::TempDir dir;
+  const auto folder = dir.path / std::filesystem::path(u8"Trận đấu");
+  std::filesystem::create_directories(folder);
+  const auto final = br::exportPath(folder, "Trận 1", std::tm{});
+  br::Mp4Writer w(options(final, br::ExportCodec::H264, 4'000'000, {30, 1}));
+  feed(w, 10, {30, 1});
+  w.finish();
+  REQUIRE_FALSE(w.error());
+  CHECK(std::filesystem::exists(final));
+  auto part = final;
+  part += ".part";
+  CHECK_FALSE(std::filesystem::exists(part));
+}
+
 TEST_CASE("Mp4Writer: abort leaves nothing" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::test::TempDir dir;
   const auto final = dir.path / "out.mp4";
