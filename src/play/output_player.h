@@ -30,7 +30,7 @@ class OutputPlayer {
   void start();
   void stop();
   bool idle() const;
-  std::optional<int> currentEvent() const { return player_.state().eventId; }
+  std::optional<int> currentEvent() const { return player_.snapshot().eventId; }
   uint64_t ticks() const { return tick_; }
   bc::TextureRef lastPicture() const {
     std::lock_guard lock(heldMutex_);

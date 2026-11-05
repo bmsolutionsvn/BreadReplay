@@ -106,7 +106,7 @@ void OutputPlayer::tickOnce() {
   bc::TextureRef pic = renderAt(tr);
 
   if (playingHighlight_ && settings_.transition == "fade" && settings_.fadeS > 0 && fadePlayer_ &&
-      highlightIndex_ + 1 < highlight_.size() && player_.state().playing) {
+      highlightIndex_ + 1 < highlight_.size() && player_.snapshot().playing) {
     const bool inFade = player_.remainingSeconds() <= settings_.fadeS;
     if (inFade) {
       if (!fading_) {
@@ -157,6 +157,6 @@ void OutputPlayer::stop() {
   for (auto& o : outs_) o->stop();
 }
 
-bool OutputPlayer::idle() const { return !player_.state().playing && !playingHighlight_; }
+bool OutputPlayer::idle() const { return !player_.snapshot().playing && !playingHighlight_; }
 
 }  // namespace br

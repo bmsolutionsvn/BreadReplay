@@ -196,6 +196,32 @@ TEST_CASE("OutputPlayer: a slow output never slows ticks") {
   op.stop();
 }
 
+TEST_CASE("OutputPlayer: keeps pace while the command lock is held") {
+  Fixture f;
+  f.settings.rate = bc::Rate{60, 1};
+  std::recursive_mutex lock;
+  f.player = std::make_unique<br::Player>(f.events, f.settings.rate, true, false, &lock);
+  const int id = f.makeEvent(kBase, kBase + 10 * kS);
+  auto out = std::make_unique<bc::test::FakeOutput>(false);
+  auto* raw = out.get();
+  br::OutputPlayer op(*f.player, *f.src, *f.renderer, f.events, f.settings);
+  op.setOutputs(oneOutput(std::move(out)));
+  f.player->cue(id);
+  f.player->play();
+  op.start();
+  for (int i = 0; i < 200 && raw->delivered == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const int before = raw->delivered;
+  {
+    std::lock_guard l(lock);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+  const int after = raw->delivered;
+  op.stop();
+  CHECK(after - before >= 57);
+}
+
 TEST_CASE("OutputPlayer: a GPU-only output gets rgba8 and no bgra") {
   Fixture f;
   f.settings.rate = bc::Rate{60, 1};

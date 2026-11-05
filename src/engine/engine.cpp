@@ -400,7 +400,7 @@ Player& Engine::playerFor(const std::string& which) {
 
 void Engine::take() {
   if (!previewPlayer_ || !outputPlayerState_) return;
-  outputPlayerState_->restore(previewPlayer_->state());
+  outputPlayerState_->restore(previewPlayer_->snapshot());
   outputPlayerState_->play();
 }
 
@@ -574,15 +574,16 @@ nlohmann::json Engine::statusJson() {
   j["alerts"] = alerts_;
   j["hotkeys"] = show_.settings.hotkeys;
   auto playerJson = [&](Player& p) {
+    const auto s = p.snapshot();
     nlohmann::json jp;
-    jp["posUs"] = p.state().posUs;
-    jp["tc"] = formatTimecode(p.state().posUs, show_.settings.rate);
-    jp["eventId"] = p.state().eventId ? nlohmann::json(*p.state().eventId) : nlohmann::json(nullptr);
-    jp["angle"] = p.state().angle;
-    jp["playing"] = p.state().playing;
-    jp["speed"] = p.state().lever;
-    jp["locked"] = p.state().leverLocked;
-    jp["zoom"] = zoomJson(p.state().zoom);
+    jp["posUs"] = s.posUs;
+    jp["tc"] = formatTimecode(s.posUs, show_.settings.rate);
+    jp["eventId"] = s.eventId ? nlohmann::json(*s.eventId) : nlohmann::json(nullptr);
+    jp["angle"] = s.angle;
+    jp["playing"] = s.playing;
+    jp["speed"] = s.lever;
+    jp["locked"] = s.leverLocked;
+    jp["zoom"] = zoomJson(s.zoom);
     return jp;
   };
   nlohmann::json players;
@@ -656,7 +657,7 @@ void Engine::followLiveEdge() {
   // At the live edge Preview follows the newest recorded timestamp; while reviewing it stays where
   // the operator put it. A Preview never cued (no angle yet) also follows: it starts at the edge.
   const int64_t newest = newestTs();
-  const auto pv = previewPlayer_->state();
+  const auto pv = previewPlayer_->snapshot();
   // "Never cued" includes an angle restored from the workspace with no position yet.
   const bool neverCued = pv.angle.empty() || pv.posUs <= 0;
   if (newest <= 0 || pv.eventId || (!neverCued && std::llabs(pv.posUs - newest) > 1'000'000)) return;
@@ -746,7 +747,7 @@ void Engine::previewLoop() {
         }
       }
       if (!anyNative && !fallbackTick) return;
-      const int64_t at = previewPlayer_->state().posUs;
+      const int64_t at = previewPlayer_->snapshot().posUs;
       std::vector<std::string> ids;
       {
         std::unique_lock cmdLock(cmdM_, std::try_to_lock);

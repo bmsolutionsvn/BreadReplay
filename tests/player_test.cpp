@@ -233,30 +233,112 @@ TEST_CASE("Player: riding on Output records into the store and the picture") {
   CHECK(std::any_of(angles.begin(), angles.end(), [](const br::AngleCut& a) { return a.inputId == "cam2"; }));
 }
 
-TEST_CASE("Player: pass writes take the store lock") {
+TEST_CASE("Player: a tick never waits for the store lock") {
   auto store = passStore();
-  std::recursive_mutex lock;
-  br::Player p(store, kTen, true, false, &lock);
+  std::recursive_mutex storeLock;
+  br::Player p(store, kRate, true, false, &storeLock);
   p.cue(1);
   p.play();
+  const int64_t before = p.state().posUs;
   std::atomic<bool> held{false};
-  std::atomic<bool> done{false};
   std::thread holder([&] {
-    std::unique_lock held_(lock);
+    std::unique_lock l(storeLock);
     held = true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
   });
   while (!held) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  std::thread ticker([&] {
+  int64_t worst = 0;
+  for (int i = 0; i < 10; ++i) {
+    const auto t0 = std::chrono::steady_clock::now();
     p.tick();
-    done = true;
-  });
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  const bool blocked = !done;
+    const auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+    worst = std::max(worst, dt);
+  }
   holder.join();
+  CHECK(worst < 5'000);
+  CHECK(p.state().posUs == before + 10 * kPeriod);
+}
+
+TEST_CASE("Player: a pass made while the store is busy lands when it frees") {
+  auto store = passStore();
+  std::recursive_mutex storeLock;
+  br::Player p(store, kRate, true, false, &storeLock);
+  p.cue(1);
+  p.step(100);  // 2 s at 50 fps
+  p.play();
+  for (int i = 0; i < 50; ++i) p.tick();  // 3 s
+  REQUIRE(p.state().posUs == 3 * kS);
+  p.setAngle("cam2");
+
+  std::atomic<bool> held{false};
+  std::atomic<bool> release{false};
+  std::thread holder([&] {
+    std::unique_lock l(storeLock);
+    held = true;
+    // Bounded so the pre-fix build fails its asserts instead of deadlocking the suite.
+    for (int i = 0; i < 3000 && !release; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  });
+  while (!held) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  for (int i = 0; i < 100 && p.state().posUs < 5 * kS; ++i) {
+    CHECK(p.tick().inputId == "cam2");
+  }
+  CHECK(p.state().posUs >= 5 * kS);
+  const auto cut = [](const br::AngleCut& a) { return a.tUs == 4 * kS && a.inputId == "cam3"; };
+  CHECK(std::any_of(store.find(1)->angles.begin(), store.find(1)->angles.end(), cut));
+
+  release = true;
+  holder.join();
+  p.tick();
+  const auto& angles = store.find(1)->angles;
+  CHECK(std::any_of(angles.begin(), angles.end(),
+                    [](const br::AngleCut& a) { return a.tUs == 3 * kS && a.inputId == "cam2"; }));
+  CHECK(std::none_of(angles.begin(), angles.end(),
+                     [](const br::AngleCut& a) { return a.tUs > 3 * kS && a.tUs <= 5 * kS; }));
+}
+
+TEST_CASE("Player: Preview follows an edit on the next tick") {
+  auto store = passStore();
+  br::Player p(store, kRate, true);
+  p.cue(1);
+  CHECK(p.remainingSeconds() == doctest::Approx(10.0));
+  store.trim(1, 0, -5 * kS);
+  p.tick();
+  CHECK(p.remainingSeconds() == doctest::Approx(5.0));
+}
+
+TEST_CASE("Player: ride keys and ticks from two threads do not deadlock") {
+  auto store = passStore();
+  std::recursive_mutex storeLock;
+  br::Player p(store, kRate, true, true, &storeLock);
+  p.cue(1);
+  p.play();
+
+  std::atomic<bool> tickerDone{false};
+  std::atomic<bool> keysDone{false};
+  std::thread ticker([&] {
+    for (int i = 0; i < 2000; ++i) p.tick();
+    tickerDone = true;
+  });
+  std::thread keys([&] {
+    for (int i = 0; i < 500; ++i) {
+      std::lock_guard l(storeLock);
+      p.setAngle(i % 2 ? "cam2" : "cam1");
+      p.setSpeedPreset(1.0);
+    }
+    keysDone = true;
+  });
+  for (int i = 0; i < 5000 && !(tickerDone && keysDone); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(tickerDone);
+  CHECK(keysDone);
   ticker.join();
-  CHECK(blocked);
-  CHECK(done);
+  keys.join();
+  const auto& angles = store.find(1)->angles;
+  for (size_t i = 1; i < angles.size(); ++i) CHECK(angles[i - 1].tUs < angles[i].tUs);
 }
 
 TEST_CASE("Player: a 30 fps angle in a 60 fps show repeats frames") {
