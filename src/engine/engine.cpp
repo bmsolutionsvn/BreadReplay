@@ -536,6 +536,7 @@ nlohmann::json Engine::statusJson() {
   nlohmann::json j;
   j["type"] = "status";
   j["recording"] = recording_;
+  j["rate"] = {{"num", show_.settings.rate.num}, {"den", show_.settings.rate.den}};
   j["inputs"] = nlohmann::json::array();
   const int64_t t = now();
   for (const auto& in : show_.inputs) {

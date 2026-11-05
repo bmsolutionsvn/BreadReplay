@@ -82,6 +82,14 @@ TEST_CASE("Engine: status carries the saved hotkeys") {
   CHECK(engine.statusJson()["hotkeys"]["mark.in"] == "J");
 }
 
+TEST_CASE("Engine: status carries the show rate") {
+  Fixture f;
+  br::Engine engine(f.depsMakers(), f.makeShow(0), f.dir.path / "show");
+  const auto s = engine.statusJson();
+  CHECK(s["rate"]["num"] == 30);
+  CHECK(s["rate"]["den"] == 1);
+}
+
 TEST_CASE("Engine: two file inputs record 3 s each") {
   Fixture f;
   br::Engine engine(f.depsMakers(), f.makeShow(2), f.dir.path / "show");

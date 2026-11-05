@@ -104,6 +104,7 @@ function renderTimeline(over: Partial<Parameters<typeof Timeline>[0]> = {}) {
       onSelectBlock={noop}
       fitKey={0}
       status={status()}
+      periodUs={100_000}
       width={1000}
       {...over}
     />,
@@ -139,6 +140,13 @@ test('Timeline: dragging a block to another track changes its camera', () => {
   const sent = client.send.mock.calls[0][0];
   expect(sent.cmd).toBe('event.update');
   expect(sent.angles[2].inputId).toBe('c1');
+});
+
+test('Timeline: drags snap to the show frame at 50 fps', () => {
+  const { client, section } = renderTimeline({ periodUs: 20_000 });
+  fireEvent.mouseDown(screen.getByTestId('handle-out'), { clientX: 1000 });
+  fireEvent.mouseUp(section, { clientX: 903, shiftKey: true });
+  expect(client.send).toHaveBeenCalledWith(expect.objectContaining({ cmd: 'event.update', id: 1, outUs: 9_020_000 }));
 });
 
 test('Timeline: dragging a switch edge moves that cut', () => {

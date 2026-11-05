@@ -19,8 +19,6 @@ import { deleteBlock, split } from './screen/timelineEdits';
 import { TitleBar } from './screen/TitleBar';
 import { setEvents, setStatus, useEvents, useStatus } from './state/store';
 
-const FPS = 60_000 / 1001;
-
 // Everything below the engine connection; tests render this with a fake client.
 export function App({ client }: { client: Client }) {
   const status = useStatus();
@@ -106,7 +104,8 @@ export function App({ client }: { client: Client }) {
 
   const event = events?.events.find((e) => e.id === selected) ?? null;
   const pos = status?.players.preview.posUs ?? 0;
-  const periodUs = Math.round(1_000_000 / FPS);
+  const fps = status?.rate ? status.rate.num / status.rate.den : 60_000 / 1001;
+  const periodUs = Math.round(1_000_000 / fps);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,7 +115,7 @@ export function App({ client }: { client: Client }) {
         previewLocked: status?.players.preview.locked,
         previewPlaying: status?.players.preview.playing,
         selectedEventId: selected,
-        fps: FPS,
+        fps,
       });
       if (!cmd) return;
       e.preventDefault();
@@ -185,7 +184,7 @@ export function App({ client }: { client: Client }) {
 
       <div className="main">
         <div className="stage">
-          <Monitors status={status} fps={FPS} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
+          <Monitors status={status} fps={fps} client={client} events={events} hotkeys={hotkeys} lastN={lastN} native={native} stamp={stamp} onMark={sendMark} />
           <AngleRow status={status} client={client} hotkeys={hotkeys} native={native} />
           <Timeline
             client={client}
@@ -201,6 +200,7 @@ export function App({ client }: { client: Client }) {
             fitKey={fitKey}
             status={status}
             pin={lastMark}
+            periodUs={periodUs}
           />
           <ControlsBar client={client} lastN={lastN} hotkeys={hotkeys} target={target} onMark={sendMark} />
         </div>
