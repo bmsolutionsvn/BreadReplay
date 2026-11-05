@@ -2,10 +2,19 @@ import { useEffect, useState } from 'react';
 
 import type { Client } from '../api/client';
 import type { ExportState, Status } from '../api/types';
-import { formatDiskLeft, formatSize, signalHint } from '../format';
+import { CleanupConfirm } from '../dialogs/CleanupConfirm';
+import { formatBytes, formatDiskLeft, formatSize, signalHint } from '../format';
 
 // System errors persist as a block, never as a toast (BM UX contract).
-export function StatusBar({ status, client }: { status: Status | null; client?: Pick<Client, 'send'> }) {
+export function StatusBar({
+  status,
+  client,
+  onModalChange,
+}: {
+  status: Status | null;
+  client?: Pick<Client, 'send'>;
+  onModalChange?: (open: boolean) => void;
+}) {
   const disk = status?.disk;
   const exports = status?.exports ?? [];
   const running = exports.find((e) => e.state === 'running');
@@ -16,12 +25,58 @@ export function StatusBar({ status, client }: { status: Status | null; client?: 
   const done = finished?.state === 'done' ? finished : null;
   const [recent, setRecent] = useState<ExportState | null>(null);
 
+  const cleanup = status?.cleanup;
+  const cleaning = cleanup?.state === 'running';
+  const cleanupFailed = cleanup?.state === 'failed' ? cleanup : null;
+  const [confirmBytes, setConfirmBytes] = useState<number | null>(null);
+  const [nothingToFree, setNothingToFree] = useState(false);
+  const [freed, setFreed] = useState<number | null>(null);
+
   useEffect(() => {
     if (!done) return;
     setRecent(done);
     const timer = setTimeout(() => setRecent(null), 10_000);
     return () => clearTimeout(timer);
   }, [done?.id, done?.state]);
+
+  useEffect(() => {
+    onModalChange?.(confirmBytes !== null);
+  }, [confirmBytes, onModalChange]);
+
+  useEffect(() => {
+    if (!nothingToFree) return;
+    const timer = setTimeout(() => setNothingToFree(false), 3_000);
+    return () => clearTimeout(timer);
+  }, [nothingToFree]);
+
+  useEffect(() => {
+    if (cleanup?.state !== 'done') return;
+    setFreed(cleanup.bytesFreed);
+    const timer = setTimeout(() => setFreed(null), 10_000);
+    return () => clearTimeout(timer);
+  }, [cleanup?.state, cleanup?.bytesFreed]);
+
+  async function askCleanup() {
+    if (!client) return;
+    setNothingToFree(false);
+    try {
+      const reply = await client.send({ cmd: 'cleanup.plan' });
+      if (!reply.ok) return;
+      const bytes = Number(reply.bytesFreed ?? 0);
+      if (!bytes) {
+        setNothingToFree(true);
+        return;
+      }
+      setConfirmBytes(bytes);
+    } catch {
+      // disconnected: the next status update will say what happened
+    }
+  }
+
+  function runCleanup() {
+    setConfirmBytes(null);
+    void client?.send({ cmd: 'cleanup.run' });
+  }
 
   return (
     <footer className="status" aria-label="Status bar">
@@ -32,6 +87,16 @@ export function StatusBar({ status, client }: { status: Status | null; client?: 
         {disk?.secondsLeft != null ? `room for ${formatDiskLeft(disk.secondsLeft).replace(' left', '')} more` : 'room left: —'}
       </span>
       <span title="How fast the recording is being written to the drive.">{disk ? `writing ${disk.writeMBps.toFixed(1)} MB/s` : '—'}</span>
+      {client && (
+        <div className="cleanup">
+          <button className="mini" disabled={cleaning || nothingToFree} onClick={() => void askCleanup()}>
+            {nothingToFree ? 'Nothing to free' : 'Clean up'}
+          </button>
+          {cleaning && <span>Cleaning up · {Math.round((cleanup?.progress ?? 0) * 100)} %</span>}
+          {cleanupFailed && <span className="err">Cleanup failed: {cleanupFailed.error}</span>}
+          {!cleaning && !cleanupFailed && freed != null && <span>Freed {formatBytes(freed)}</span>}
+        </div>
+      )}
       <span className="rec">{status?.recording ? 'Recording' : 'Not recording'}</span>
       <div className="exports">
         {running && (
@@ -67,6 +132,13 @@ export function StatusBar({ status, client }: { status: Status | null; client?: 
           </div>
         ))}
       </div>
+      {confirmBytes !== null && (
+        <CleanupConfirm
+          bytes={confirmBytes}
+          onConfirm={runCleanup}
+          onCancel={() => setConfirmBytes(null)}
+        />
+      )}
     </footer>
   );
 }

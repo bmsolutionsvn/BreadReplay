@@ -68,6 +68,7 @@ export interface Status {
   edit?: { canUndo: boolean; canRedo: boolean };
   nativeVideo?: true | string;
   exports?: ExportState[];
+  cleanup?: { state: 'idle' | 'running' | 'done' | 'failed'; progress: number; bytesFreed: number; error: string };
   exportCodecs?: ExportCodec[];
   exportCodec?: ExportCodec;
   exportQuality?: ExportQuality;
