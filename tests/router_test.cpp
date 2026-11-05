@@ -331,3 +331,19 @@ TEST_CASE("Router: later edits do not change a queued export"
   }
   CHECK(state == "done");
 }
+TEST_CASE("Router: cleanup.plan reports nothing to free while everything is recent") {
+  Fixture f;
+  const auto r = f.engine->handle({{"cmd", "cleanup.plan"}});
+  REQUIRE(r.at("ok").get<bool>());
+  CHECK(r.at("bytesFreed").get<int64_t>() == 0);
+  CHECK(r.at("segments").get<int>() == 0);
+}
+
+TEST_CASE("Router: cleanup.run twice reports it is running") {
+  Fixture f;
+  const auto first = f.engine->handle({{"cmd", "cleanup.run"}});
+  REQUIRE(first.at("ok").get<bool>());
+  const auto second = f.engine->handle({{"cmd", "cleanup.run"}});
+  const bool started = second.value("ok", false);
+  CHECK((started || second.value("error", std::string{}) == "cleanup is already running"));
+}

@@ -25,6 +25,7 @@
 #include "play/player.h"
 #include "play/renderer.h"
 #include "record/recorder.h"
+#include "store/cleanup_runner.h"
 #include "store/input_store.h"
 #include "store/retention.h"
 
@@ -90,6 +91,8 @@ class Engine {
 
   nlohmann::json statusJson();
   nlohmann::json handle(const nlohmann::json& cmd);
+  // cleanup.plan or cleanup.run; the runner does the disk work on its own thread.
+  nlohmann::json cleanupCommand(const std::string& name);
 
   void setSender(std::function<void(const std::string&)> text, std::function<void(const std::vector<uint8_t>&)> binary);
   void setSurfaces(bc::SurfaceHub* hub);                     // null = native video off
@@ -130,6 +133,7 @@ class Engine {
   void rebuildFrameSource();
   void stopExportQueue();
   void rebuildExportQueue();
+  void rebuildCleanupRunner();
   void startPreviewThread();
   void previewLoop();
   void retentionLoop();
@@ -166,6 +170,7 @@ class Engine {
   std::unique_ptr<Player> previewPlayer_;
   std::unique_ptr<Player> outputPlayerState_;
   std::unique_ptr<ExportQueue> exportQueue_;
+  std::unique_ptr<CleanupRunner> cleanup_;
 
   std::unique_ptr<bc::PreviewEncoder> previewEncoder_;
   std::unique_ptr<bc::PreviewEncoder> outputEncoder_;

@@ -42,6 +42,7 @@ add_library(br_core STATIC
   src/store/input_store.cpp
   src/store/retention.cpp
   src/store/cleanup.cpp
+  src/store/cleanup_runner.cpp
   src/record/recorder.cpp
   src/events/event_store.cpp
   src/events/edit_history.cpp

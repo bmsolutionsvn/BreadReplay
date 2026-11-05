@@ -1,10 +1,14 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <ctime>
 #include <fstream>
+#include <thread>
 
 #include "store/cleanup.h"
+#include "store/cleanup_runner.h"
 #include "support/temp_dir.h"
 
 namespace {
@@ -46,6 +50,13 @@ std::vector<br::FrameRecord> recordsOf(const std::filesystem::path& base) {
   REQUIRE(reader.has_value());
   reader->refresh();
   return std::vector<br::FrameRecord>(reader->records().begin(), reader->records().end());
+}
+
+void waitDone(br::CleanupRunner& runner) {
+  for (int i = 0; i < 500; ++i) {
+    if (runner.status().state != "running") return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 }
 }  // namespace
 
@@ -175,4 +186,71 @@ TEST_CASE("Cleanup: a store left mid-swap recovers on load") {
   CHECK_FALSE(std::filesystem::exists(segmentBase.string() + ".old.vmxi"));
   CHECK_FALSE(std::filesystem::exists(stray.string() + ".cleanup.vmxs"));
   CHECK_FALSE(std::filesystem::exists(stray.string() + ".cleanup.vmxi"));
+}
+TEST_CASE("Cleanup: the runner frees what the plan said") {
+  bc::test::TempDir unusedDir;
+  bc::test::TempDir aroundDir;
+  br::InputStore unused(unusedDir.path, proto());
+  br::InputStore around(aroundDir.path, proto());
+  const int64_t base = noon();
+  record(unused, base + 600 * kMs, 600);  // far outside the replay, so nothing there is kept
+  record(around, base, 600);
+  std::vector<br::Event> events(1);
+  events[0].inUs = base + 17 * kMs;
+  events[0].outUs = base + 33 * kMs;
+  const auto keep = br::keptRanges(events, br::kCleanupMarginUs);
+  const std::map<std::string, const br::InputStore*> map{{"cam1", &unused}, {"cam2", &around}};
+  const auto newest = [&] { return std::max(unused.newestTs(), around.newestTs()); };
+  const auto plans = br::planCleanup(map, keep, newest());
+
+  br::CleanupRunner runner({{"cam1", &unused}, {"cam2", &around}}, [&] { return keep; }, newest, 0);
+  REQUIRE(runner.start());
+  waitDone(runner);
+  const auto status = runner.status();
+  CHECK(status.state == "done");
+  CHECK(status.bytesFreed == br::totalFreed(plans));
+  CHECK(unused.segments().size() == 1);  // only the open segment is left
+  CHECK(around.find(base + 20 * kMs).has_value());
+}
+
+TEST_CASE("Cleanup: a replay made during the run is kept") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  const int64_t base = noon();
+  record(store, base, 600);
+  std::atomic<int> calls{0};
+  const auto kept = [&] {
+    if (calls++ == 0) return std::vector<br::ProtectedRange>{};
+    return std::vector<br::ProtectedRange>{{base + 20 * kMs, base + 25 * kMs}};
+  };
+  br::CleanupRunner runner({{"cam1", &store}}, kept, [&] { return store.newestTs(); }, 0);
+  REQUIRE(runner.start());
+  waitDone(runner);
+  CHECK(runner.status().state == "done");
+  const auto ref = store.find(base + 22 * kMs);
+  REQUIRE(ref.has_value());
+  CHECK_FALSE(store.readVideo(*ref, false).empty());
+}
+
+TEST_CASE("Cleanup: a segment removed meanwhile is skipped") {
+  bc::test::TempDir dir;
+  br::InputStore store(dir.path, proto());
+  const int64_t base = noon();
+  record(store, base, 600);
+  const auto planned = store.segments().front().base;
+  std::atomic<int> calls{0};
+  const auto kept = [&] {
+    if (calls++ == 1) {
+      std::error_code ec;
+      std::filesystem::remove(planned.string() + ".vmxs", ec);
+      std::filesystem::remove(planned.string() + ".vmxi", ec);
+    }
+    return std::vector<br::ProtectedRange>{};
+  };
+  br::CleanupRunner runner({{"cam1", &store}}, kept, [&] { return store.newestTs(); }, 0);
+  REQUIRE(runner.start());
+  waitDone(runner);
+  const auto status = runner.status();
+  CHECK(status.state == "done");
+  CHECK(status.error.empty());
 }

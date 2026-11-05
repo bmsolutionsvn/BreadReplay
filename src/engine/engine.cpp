@@ -249,6 +249,7 @@ void Engine::start() {
   buildInputs();
   rebuildFrameSource();
   rebuildExportQueue();
+  rebuildCleanupRunner();
 
   previewPlayer_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, false, &cmdM_);
   outputPlayerState_ = std::make_unique<Player>(show_.events, show_.settings.rate, true, true, &cmdM_);
@@ -276,6 +277,10 @@ void Engine::stop() {
   if (statusThread_.joinable()) statusThread_.join();
   recordStop();
   if (outputPlayer_) outputPlayer_->stop();
+  if (cleanup_) {
+    cleanup_->stop();
+    cleanup_.reset();
+  }
   stopExportQueue();
   previewEncoder_.reset();
   outputEncoder_.reset();
@@ -371,6 +376,48 @@ void Engine::rebuildExportQueue() {
   std::map<std::string, const InputStore*> map;
   for (const auto& [id, store] : stores_) map[id] = store.get();
   exportQueue_ = std::make_unique<ExportQueue>(std::move(map), show_.settings);
+}
+
+void Engine::rebuildCleanupRunner() {
+  if (cleanup_) {
+    cleanup_->stop();
+    cleanup_.reset();
+  }
+  if (!started_) return;
+  std::map<std::string, InputStore*> map;
+  for (const auto& [id, store] : stores_) map[id] = store.get();
+  cleanup_ = std::make_unique<CleanupRunner>(
+      std::move(map),
+      [this] {
+        std::lock_guard lock(m_);
+        auto keep = keptRanges(show_.events.events(), kCleanupMarginUs);
+        if (exportQueue_) {
+          const auto inFlight = exportQueue_->protectedRanges();
+          keep.insert(keep.end(), inFlight.begin(), inFlight.end());
+        }
+        return keep;
+      },
+      [this] { return newestTs(); });
+}
+
+nlohmann::json Engine::cleanupCommand(const std::string& name) {
+  if (name == "cleanup.run") {
+    if (!cleanup_ || !cleanup_->start()) return {{"ok", false}, {"error", "cleanup is already running"}};
+    return {{"ok", true}};
+  }
+  if (name != "cleanup.plan") return {{"ok", false}, {"error", "unknown command: " + name}};
+  std::lock_guard lock(m_);
+  auto keep = keptRanges(show_.events.events(), kCleanupMarginUs);
+  if (exportQueue_) {
+    const auto inFlight = exportQueue_->protectedRanges();
+    keep.insert(keep.end(), inFlight.begin(), inFlight.end());
+  }
+  std::map<std::string, const InputStore*> map;
+  for (const auto& [id, store] : stores_) map[id] = store.get();
+  const int64_t newest = newestTs();
+  const int64_t protectFrom = newest > 0 ? newest - kCleanupProtectUs : 0;
+  const auto plans = planCleanup(map, keep, protectFrom);
+  return {{"ok", true}, {"bytesFreed", totalFreed(plans)}, {"segments", plans.size()}};
 }
 
 void Engine::recordStart() {
@@ -626,6 +673,11 @@ nlohmann::json Engine::statusJson() {
                               {"path", e.path}});
     }
   }
+  const CleanupStatus cleanup = cleanup_ ? cleanup_->status() : CleanupStatus{};
+  j["cleanup"] = {{"state", cleanup.state},
+                  {"progress", cleanup.progress},
+                  {"bytesFreed", cleanup.bytesFreed},
+                  {"error", cleanup.error}};
   j["exportCodecs"] = nlohmann::json::array();
   for (const auto codec : availableExportCodecs())
     j["exportCodecs"].push_back(codec == ExportCodec::H264 ? "h264" : "hevc");
