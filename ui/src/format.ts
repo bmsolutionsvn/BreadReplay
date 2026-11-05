@@ -33,6 +33,15 @@ export function formatSize(bytes: number): string {
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+// 1024-based, one decimal from MB up: 0 B, 512 KB, 12.3 GB.
+export function formatBytes(bytes: number): string {
+  const n = Math.max(0, bytes);
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 ** 2) return `${Math.round(n / 1024)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(1)} GB`;
+}
+
 export function formatDiskLeft(secondsLeft: number | null): string {
   if (secondsLeft == null || !Number.isFinite(secondsLeft)) return '--';
   const s = Math.max(0, Math.floor(secondsLeft));

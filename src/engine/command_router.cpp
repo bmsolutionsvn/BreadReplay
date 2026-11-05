@@ -313,6 +313,9 @@ nlohmann::json CommandRouter::handleImpl(const nlohmann::json& cmd) {
       engine_.events().moveEvents(ids, cmd.value("listId", std::string{}), beforeId);
       return {{"ok", true}};
     }
+    if (name == "cleanup.plan" || name == "cleanup.run") {
+      return engine_.cleanupCommand(name);
+    }
     if (name == "export.start") {
       ExportQueue* queue = engine_.exportQueue();
       if (!queue) return {{"ok", false}, {"error", "export is not available"}};

@@ -40,6 +40,7 @@ export function App({ client }: { client: Client }) {
   const [lastMark, setLastMark] = useState<MarkStamp | null>(null);
   const stampTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [settings, setSettings] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
   const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
   const [exportWhat, setExportWhat] = useState<ExportTarget | null>(null);
@@ -116,7 +117,7 @@ export function App({ client }: { client: Client }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (settings) return;
+      if (settings || cleanupOpen) return;
       const cmd = keyToCommand(e, hotkeyMap(hotkeys), {
         inputs: status?.inputs,
         previewLocked: status?.players.preview.locked,
@@ -158,7 +159,7 @@ export function App({ client }: { client: Client }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [client, status, selected, settings, hotkeys, events, sendMark, event, pos, periodUs, selectedBlock, selectedIds]);
+  }, [client, status, selected, settings, cleanupOpen, hotkeys, events, sendMark, event, pos, periodUs, selectedBlock, selectedIds]);
 
   useEffect(() => setSelectedBlock(null), [selected]);
 
@@ -227,7 +228,7 @@ export function App({ client }: { client: Client }) {
         />
       </div>
 
-      <StatusBar status={status} client={client} />
+      <StatusBar status={status} client={client} onModalChange={setCleanupOpen} />
       {exportWhat && (
         <ExportPanel
           client={client}

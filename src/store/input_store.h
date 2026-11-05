@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -50,6 +51,11 @@ class InputStore {
   std::vector<float> readAudio(const FrameRef&) const;
   std::vector<SegmentInfo> segments() const;
   bool removeSegment(const std::filesystem::path& base);  // refuses the open (writing) segment
+  // Swaps a rewritten segment in under the store lock. Refuses the writing segment and an unknown
+  // base. Bumps generation() so players drop their decode state for this input.
+  bool replaceSegment(const std::filesystem::path& base, const std::filesystem::path& newBase);
+  // Changes whenever a segment is removed or swapped, so a reader can tell its refs are stale.
+  uint64_t generation() const { return generation_.load(); }
   // A recorder's frame size changed: the open segment is closed, the next append starts a new
   // one with this header.
   void changeVideoFormat(uint32_t w, uint32_t h, bc::Rate rate,
@@ -72,6 +78,7 @@ class InputStore {
   };
 
   mutable std::shared_mutex m_;
+  std::atomic<uint64_t> generation_{0};
   std::filesystem::path dir_;
   SegmentHeader proto_;
   std::vector<Seg> segs_;

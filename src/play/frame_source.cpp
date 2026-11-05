@@ -34,6 +34,13 @@ void FrameSource::setStores(std::map<std::string, const InputStore*> stores) {
     it = cache_.erase(it);
   }
   lru_.remove_if([&](const Key& k) { return !stores_.count(k.input); });
+  for (auto it = generations_.begin(); it != generations_.end();) {
+    if (stores_.count(it->first)) {
+      ++it;
+    } else {
+      it = generations_.erase(it);
+    }
+  }
   for (auto it = provisional_.begin(); it != provisional_.end();) {
     if (stores_.count(std::get<0>(*it))) {
       ++it;
@@ -49,6 +56,39 @@ void FrameSource::ensureDecoder(const std::string& id, size_t lane, uint32_t w, 
     d.decoder = std::make_unique<VmxDecoder>(w, h);
     d.w = w;
     d.h = h;
+  }
+}
+
+void FrameSource::dropIfStale(const std::string& id, const InputStore& store) {
+  const uint64_t generation = store.generation();
+  const auto it = generations_.find(id);
+  if (it != generations_.end() && it->second == generation) return;
+  const bool first = it == generations_.end();
+  generations_[id] = generation;
+  if (first) return;
+
+  for (auto d = decoders_.begin(); d != decoders_.end();) {
+    if (d->first.first == id) {
+      d = decoders_.erase(d);
+    } else {
+      ++d;
+    }
+  }
+  for (auto c = cache_.begin(); c != cache_.end();) {
+    if (c->first.input == id) {
+      cacheBytes_ -= bytesOf(*c->second);
+      c = cache_.erase(c);
+    } else {
+      ++c;
+    }
+  }
+  lru_.remove_if([&](const Key& k) { return k.input == id; });
+  for (auto p = provisional_.begin(); p != provisional_.end();) {
+    if (std::get<0>(*p) == id) {
+      p = provisional_.erase(p);
+    } else {
+      ++p;
+    }
   }
 }
 
@@ -122,6 +162,7 @@ std::shared_ptr<const DecodedFrame> FrameSource::get(const std::string& inputId,
   if (sit == stores_.end() || !sit->second) return nullptr;
   const InputStore& store = *sit->second;
 
+  dropIfStale(inputId, store);
   const auto ref = store.find(tsUs);
   if (!ref) return nullptr;
   const Key key{inputId, ref->tsUs};
@@ -345,6 +386,7 @@ std::shared_ptr<const PreviewImage> FrameSource::preview(const std::string& inpu
   const auto sit = stores_.find(inputId);
   if (sit == stores_.end() || !sit->second) return nullptr;
   const InputStore& store = *sit->second;
+  dropIfStale(inputId, store);
   const auto ref = store.find(tsUs);
   if (!ref) return nullptr;
   const auto [w, h] = store.frameSize(*ref);

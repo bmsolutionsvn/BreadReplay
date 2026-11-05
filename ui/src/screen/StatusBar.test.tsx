@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import type { Status } from '../api/types';
 import { StatusBar } from './StatusBar';
@@ -49,4 +49,36 @@ test('StatusBar: a failed export says why', () => {
     />,
   );
   expect(screen.getByText('Export failed: the disk is full')).toBeInTheDocument();
+});
+test('StatusBar: Clean up asks the engine first and confirms before running', async () => {
+  const client = { send: vi.fn() };
+  client.send.mockResolvedValueOnce({ ok: true, bytesFreed: 13207024435, segments: 4 });
+  client.send.mockResolvedValueOnce({ ok: true });
+  render(<StatusBar status={baseStatus([])} client={client} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clean up' }));
+  expect(client.send).toHaveBeenCalledWith({ cmd: 'cleanup.plan' });
+  expect(await screen.findByText('Free 12.3 GB?')).toBeInTheDocument();
+
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Clean up' }));
+  expect(client.send).toHaveBeenCalledWith({ cmd: 'cleanup.run' });
+});
+
+test('StatusBar: nothing to free opens no dialog', async () => {
+  const client = { send: vi.fn().mockResolvedValue({ ok: true, bytesFreed: 0, segments: 0 }) };
+  render(<StatusBar status={baseStatus([])} client={client} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Clean up' }));
+  expect(await screen.findByText('Nothing to free')).toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('StatusBar: a running cleanup shows progress', () => {
+  const status = {
+    ...baseStatus([]),
+    cleanup: { state: 'running', progress: 0.4, bytesFreed: 0, error: '' },
+  } as unknown as Status;
+  render(<StatusBar status={status} client={{ send: vi.fn() }} />);
+  expect(screen.getByText('Cleaning up · 40 %')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Clean up' })).toBeDisabled();
 });

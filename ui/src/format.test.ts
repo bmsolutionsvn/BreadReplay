@@ -1,4 +1,4 @@
-import { formatClockTenths, formatDiskLeft, formatDuration, formatRemaining, formatSize, rateFps } from './format';
+import { formatClockTenths, formatDiskLeft, formatDuration, formatRemaining, formatSize, formatBytes, rateFps } from './format';
 
 const local = (h: number, m: number, s: number) => new Date(1970, 0, 1, h, m, s).getTime() * 1000;
 
@@ -27,4 +27,10 @@ test('format: durations and disk time read for an operator', () => {
   expect(formatDiskLeft(7200)).toBe('2 h 0 min left');
   expect(formatDiskLeft(null)).toBe('--');
   expect(formatSize(1536 * 1024 * 1024)).toBe('1.5 GB');
+});
+
+test('format: cleanup sizes read from bytes to GB', () => {
+  expect(formatBytes(0)).toBe('0 B');
+  expect(formatBytes(524288)).toBe('512 KB');
+  expect(formatBytes(13207024435)).toBe('12.3 GB');
 });
