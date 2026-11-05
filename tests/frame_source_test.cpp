@@ -21,6 +21,7 @@ extern "C" {
 #include "gpu/texture_pool.h"
 #include "play/frame_source.h"
 #include "record/recorder.h"
+#include "store/cleanup.h"
 #include "support/requires.h"
 #include "support/temp_dir.h"
 
@@ -625,4 +626,66 @@ TEST_CASE("FrameSource: an open GOP at the live edge is remapped once it complet
   int worst = 0;
   for (size_t i = 0; i < y.size(); ++i) worst = std::max(worst, std::abs(static_cast<int>(y[i]) - want[i]));
   CHECK(worst <= 2);
+}
+TEST_CASE("Cleanup: an H.264 rewrite stays decodable" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(180, 60, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 180);
+  bc::test::TempDir dir;
+  auto store = recordH264(dir, enc, enc.aus.size());
+
+  const int64_t from = kBase + 75 * 33333;
+  const int64_t to = kBase + 135 * 33333;
+  const std::vector<br::ProtectedRange> kept{{from, to}};
+  const auto plans = br::planCleanup({{"cam1", store.get()}}, kept, kBase + 400 * 33333);
+  REQUIRE(plans.size() == 1);
+  REQUIRE(plans[0].action == br::CleanupAction::Rewrite);
+  REQUIRE(plans[0].keep.size() == 1);
+  CHECK(plans[0].keep[0].inUs == kBase + 60 * 33333);  // the keyframe before the range
+
+  const auto newBase = br::rewriteSegment(plans[0].base, plans[0].keep);
+  REQUIRE(store->replaceSegment(plans[0].base, newBase));
+
+  br::FrameSource src({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  const auto atStart = src.get("cam1", plans[0].keep[0].inUs);
+  REQUIRE(atStart);
+  CHECK(atStart->picture.tex);
+  CHECK_FALSE(atStart->inGap);
+  const auto inside = src.get("cam1", from);
+  REQUIRE(inside);
+  CHECK(inside->picture.tex);
+}
+
+TEST_CASE("FrameSource: a swapped segment resets the decoder" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const Encoded enc = encodeH264(180, 60, 2);
+  REQUIRE_FALSE(enc.encoder.empty());
+  REQUIRE(enc.aus.size() == 180);
+  bc::test::TempDir dir;
+  auto store = recordH264(dir, enc, enc.aus.size());
+
+  br::FrameSource src({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  REQUIRE(src.get("cam1", kBase + 75 * 33333));  // primes the decoder mid-GOP
+
+  const std::vector<br::ProtectedRange> kept{{kBase + 75 * 33333, kBase + 135 * 33333}};
+  const auto plans = br::planCleanup({{"cam1", store.get()}}, kept, kBase + 400 * 33333);
+  REQUIRE(plans.size() == 1);
+  REQUIRE(plans[0].action == br::CleanupAction::Rewrite);
+  const auto newBase = br::rewriteSegment(plans[0].base, plans[0].keep);
+  REQUIRE(store->replaceSegment(plans[0].base, newBase));
+
+  br::FrameSource fresh({{"cam1", store.get()}}, gpu.get(), &pool, 1, 64);
+  const auto after = src.get("cam1", kBase + 76 * 33333);
+  const auto want = fresh.get("cam1", kBase + 76 * 33333);
+  REQUIRE(after);
+  REQUIRE(want);
+  CHECK(after->tsUs == want->tsUs);
+  CHECK(readLuma(*gpu, *after) == readLuma(*gpu, *want));
 }

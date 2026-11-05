@@ -73,6 +73,8 @@ class FrameSource {
   };
 
   void ensureDecoder(const std::string& id, size_t lane, uint32_t w, uint32_t h);
+  // Drops an input's decoders, cached frames and GOP tables when its store has swapped a segment.
+  void dropIfStale(const std::string& id, const InputStore& store);
   void ensureHx(Dec& d, StoredCodec codec, uint32_t w, uint32_t h);
   std::shared_ptr<const DecodedFrame> getCompressed(const std::string& id, const InputStore& store,
                                                     const FrameRef& ref, size_t lane);
@@ -93,6 +95,7 @@ class FrameSource {
   std::list<Key> lru_;  // front = most recently used
   size_t cacheBytes_ = 0;
   std::map<std::pair<std::string, size_t>, Dec> decoders_;
+  std::map<std::string, uint64_t> generations_;
   // GOPs served while their segment was still open: the display order can change when AUs arrive.
   std::set<std::tuple<std::string, size_t, size_t>> provisional_;
   std::atomic<uint64_t> diskReads_{0};

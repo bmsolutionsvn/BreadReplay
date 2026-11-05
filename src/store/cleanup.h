@@ -33,6 +33,11 @@ std::vector<ProtectedRange> keptRanges(const std::vector<Event>& events, int64_t
 std::vector<SegmentPlan> planCleanup(const std::map<std::string, const InputStore*>& stores,
                                      std::span<const ProtectedRange> kept, int64_t protectFromUs);
 
+// Copies the frames inside keep into <base>.cleanup with the segment's own header. Throws on an I/O
+// error after deleting what it wrote; the caller swaps it in with InputStore::replaceSegment.
+std::filesystem::path rewriteSegment(const std::filesystem::path& base,
+                                     std::span<const ProtectedRange> keep);
+
 int64_t totalFreed(const std::vector<SegmentPlan>& plans);
 
 }  // namespace br

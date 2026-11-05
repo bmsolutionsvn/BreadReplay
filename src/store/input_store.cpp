@@ -26,12 +26,44 @@ std::string stamp(int64_t epochUs) {
   std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &t);
   return buf;
 }
+
+bool endsWith(const std::string& s, const std::string& suffix) {
+  return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 }  // namespace
 
 InputStore::InputStore(std::filesystem::path dir, SegmentHeader proto)
     : dir_(std::move(dir)), proto_(std::move(proto)) {
   std::filesystem::create_directories(dir_);
   periodUs_ = proto_.rate.fps() > 0 ? static_cast<int64_t>(1'000'000.0 / proto_.rate.fps() + 0.5) : 33'333;
+
+  // A swap that crashed between renames leaves .old files: put them back when the base is gone.
+  // A rewrite that crashed leaves .cleanup files: the original is still whole, so drop them.
+  std::vector<std::filesystem::path> olds, strays;
+  for (const auto& e : std::filesystem::directory_iterator(dir_)) {
+    if (!e.is_regular_file()) continue;
+    const std::string name = e.path().filename().string();
+    if (endsWith(name, ".old.vmxs") || endsWith(name, ".old.vmxi")) {
+      olds.push_back(e.path());
+    } else if (endsWith(name, ".cleanup.vmxs") || endsWith(name, ".cleanup.vmxi")) {
+      strays.push_back(e.path());
+    }
+  }
+  for (const auto& old : olds) {
+    const std::string s = old.string();
+    const std::string suffix = endsWith(s, ".old.vmxs") ? ".old.vmxs" : ".old.vmxi";
+    const std::string target = s.substr(0, s.size() - suffix.size()) + suffix.substr(4);
+    std::error_code ec;
+    if (!std::filesystem::exists(target)) {
+      std::filesystem::rename(old, target, ec);
+    } else {
+      std::filesystem::remove(old, ec);
+    }
+  }
+  for (const auto& stray : strays) {
+    std::error_code ec;
+    std::filesystem::remove(stray, ec);
+  }
 
   for (const auto& e : std::filesystem::directory_iterator(dir_)) {
     if (!e.is_regular_file() || e.path().extension() != ".vmxs") continue;
@@ -203,6 +235,39 @@ bool InputStore::removeSegment(const std::filesystem::path& base) {
     std::filesystem::remove(std::filesystem::path(base.string() + ".vmxs"), ec);
     std::filesystem::remove(std::filesystem::path(base.string() + ".vmxi"), ec);
     segs_.erase(it);
+    ++generation_;
+    return true;
+  }
+  return false;
+}
+
+bool InputStore::replaceSegment(const std::filesystem::path& base,
+                                const std::filesystem::path& newBase) {
+  std::unique_lock lock(m_);
+  for (auto& s : segs_) {
+    if (s.base != base) continue;
+    if (s.writer) return false;  // the open segment keeps recording
+    s.reader.reset();
+    const auto oldEssence = std::filesystem::path(base.string() + ".old.vmxs");
+    const auto oldIndex = std::filesystem::path(base.string() + ".old.vmxi");
+    std::error_code ec;
+    std::filesystem::remove(oldEssence, ec);
+    std::filesystem::remove(oldIndex, ec);
+    std::filesystem::rename(std::filesystem::path(base.string() + ".vmxs"), oldEssence);
+    std::filesystem::rename(std::filesystem::path(base.string() + ".vmxi"), oldIndex);
+    std::filesystem::rename(std::filesystem::path(newBase.string() + ".vmxs"),
+                            std::filesystem::path(base.string() + ".vmxs"));
+    std::filesystem::rename(std::filesystem::path(newBase.string() + ".vmxi"),
+                            std::filesystem::path(base.string() + ".vmxi"));
+    auto r = SegmentReader::open(base);
+    s.reader = std::make_unique<SegmentReader>(r ? std::move(*r) : SegmentReader{});
+    s.times.clear();
+    for (const auto& rec : s.reader->records()) s.times.push_back(rec.tsUs);
+    s.bytes = static_cast<int64_t>(std::filesystem::file_size(std::filesystem::path(base.string() + ".vmxs"))) +
+              static_cast<int64_t>(std::filesystem::file_size(std::filesystem::path(base.string() + ".vmxi")));
+    std::filesystem::remove(oldEssence, ec);
+    std::filesystem::remove(oldIndex, ec);
+    ++generation_;
     return true;
   }
   return false;

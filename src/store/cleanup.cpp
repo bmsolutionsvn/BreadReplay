@@ -1,6 +1,7 @@
 #include "store/cleanup.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace br {
 namespace {
@@ -108,6 +109,35 @@ int64_t totalFreed(const std::vector<SegmentPlan>& plans) {
   int64_t sum = 0;
   for (const auto& p : plans) sum += p.bytesFreed;
   return sum;
+}
+
+std::filesystem::path rewriteSegment(const std::filesystem::path& base,
+                                     std::span<const ProtectedRange> keep) {
+  auto reader = SegmentReader::open(base);
+  if (!reader) throw std::runtime_error("cleanup: cannot open " + base.string());
+  reader->refresh();
+  const auto& recs = reader->records();
+  const auto newBase = std::filesystem::path(base.string() + ".cleanup");
+  auto removeNew = [&] {
+    std::error_code ec;
+    std::filesystem::remove(newBase.string() + ".vmxs", ec);
+    std::filesystem::remove(newBase.string() + ".vmxi", ec);
+  };
+  try {
+    SegmentWriter writer(newBase, reader->header());
+    for (size_t i = 0; i < recs.size(); ++i) {
+      if (!inside(keep, recs[i].tsUs)) continue;
+      const auto video = reader->readVideo(i, false);
+      const auto audio = reader->readAudio(i);
+      writer.append(recs[i].tsUs, video, recs[i].previewLen, audio,
+                    isKeyframe(reader->header(), recs[i]), recs[i].srcPtsUs);
+    }
+    writer.close();
+  } catch (...) {
+    removeNew();
+    throw;
+  }
+  return newBase;
 }
 
 }  // namespace br
