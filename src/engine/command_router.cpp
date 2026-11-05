@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <optional>
 #include <stdexcept>
 
@@ -310,6 +311,68 @@ nlohmann::json CommandRouter::handleImpl(const nlohmann::json& cmd) {
       std::optional<int> beforeId;
       if (cmd.contains("beforeId") && !cmd["beforeId"].is_null()) beforeId = cmd["beforeId"].get<int>();
       engine_.events().moveEvents(ids, cmd.value("listId", std::string{}), beforeId);
+      return {{"ok", true}};
+    }
+    if (name == "export.start") {
+      ExportQueue* queue = engine_.exportQueue();
+      if (!queue) return {{"ok", false}, {"error", "export is not available"}};
+      const auto& settings = engine_.show().settings;
+      std::vector<int> ids;
+      std::string defaultName;
+      if (cmd.contains("ids")) {
+        ids = cmd.value("ids", std::vector<int>{});
+        defaultName = "Selection";
+      } else if (cmd.contains("listId")) {
+        const auto listId = cmd.value("listId", std::string{});
+        ids = engine_.events().orderOf(listId);
+        defaultName = "Replays";
+        for (const auto& l : engine_.events().lists())
+          if (l.id == listId) defaultName = l.name;
+      } else if (cmd.contains("id")) {
+        const Event* e = engine_.events().find(cmd.value("id", 0));
+        if (e) {
+          ids = {e->id};
+          defaultName = e->name.empty() ? "Replay" : e->name;
+        }
+      }
+      const auto display = engine_.events().displayOrder();
+      ids.erase(std::remove_if(ids.begin(), ids.end(),
+                               [&](int id) {
+                                 return !engine_.events().find(id) ||
+                                        std::find(display.begin(), display.end(), id) == display.end();
+                               }),
+                ids.end());
+      std::stable_sort(ids.begin(), ids.end(), [&](int a, int b) {
+        return std::find(display.begin(), display.end(), a) < std::find(display.begin(), display.end(), b);
+      });
+      if (ids.empty()) return {{"ok", false}, {"error", "nothing to export"}};
+
+      ExportJob job;
+      job.name = cmd.value("name", defaultName);
+      for (int id : ids) job.events.push_back(*engine_.events().find(id));
+      job.codec = parseCodec(cmd.value("codec", settings.exportCodec));
+      const auto quality = parseQuality(cmd.value("quality", settings.exportQuality));
+      std::optional<double> mbps;
+      if (cmd.contains("mbps")) mbps = cmd.value("mbps", settings.exportMbps);
+      else if (quality == ExportQuality::Custom) mbps = settings.exportMbps;
+      job.bitRate = exportBitrate(job.codec, quality, mbps, settings.outW, settings.outH, settings.rate);
+
+      const std::filesystem::path folder = settings.exportFolder.empty()
+                                               ? engine_.folder() / "Exports"
+                                               : std::filesystem::path(settings.exportFolder);
+      std::error_code ec;
+      std::filesystem::create_directories(folder, ec);
+      if (ec) return {{"ok", false}, {"error", "cannot create the export folder: " + ec.message()}};
+      const std::time_t now = std::time(nullptr);
+      std::tm local{};
+      localtime_s(&local, &now);
+      job.path = exportPath(folder, job.name, local);
+      const int id = queue->add(std::move(job));
+      return {{"ok", true}, {"id", id}};
+    }
+    if (name == "export.cancel") {
+      if (!engine_.exportQueue()) return {{"ok", false}, {"error", "export is not available"}};
+      engine_.exportQueue()->cancel(cmd.value("id", 0));
       return {{"ok", true}};
     }
     if (name == "highlight.play") {

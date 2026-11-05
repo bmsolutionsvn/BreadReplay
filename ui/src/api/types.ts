@@ -44,6 +44,18 @@ export interface OutputPlayerStatus extends PlayerStatus {
   remainingS: number | null;
 }
 
+export type ExportCodec = 'h264' | 'hevc';
+export type ExportQuality = 'high' | 'medium' | 'small' | 'custom';
+
+export interface ExportState {
+  id: number;
+  name: string;
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  progress: number;
+  error: string;
+  path: string;
+}
+
 export interface Status {
   recording: boolean;
   inputs: InputStatus[];
@@ -54,6 +66,11 @@ export interface Status {
   events: { version: number };
   edit?: { canUndo: boolean; canRedo: boolean };
   nativeVideo?: true | string;
+  exports?: ExportState[];
+  exportCodecs?: ExportCodec[];
+  exportCodec?: ExportCodec;
+  exportQuality?: ExportQuality;
+  exportMbps?: number;
 }
 
 export interface AngleCut {
@@ -128,4 +145,8 @@ export interface ShowSettings {
   slatePath: string;
   hotkeys: Record<string, string>;
   recordingFolder: string;
+  exportFolder: string;
+  exportCodec: ExportCodec;
+  exportQuality: ExportQuality;
+  exportMbps: number;
 }

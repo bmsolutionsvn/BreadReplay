@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState, type MouseEvent as ReactMouseEvent } fro
 import type { Client } from '../api/client';
 import type { Event, EventList as Group, EventStore } from '../api/types';
 import { useContextMenu } from '../ContextMenu';
+import type { ExportTarget } from '../dialogs/ExportPanel';
 import { formatClock, formatDuration } from '../format';
 import { keyLabel } from '../hotkeys';
 import { displayOrder, groupOf, rangeIds, toggleId } from './selection';
@@ -14,11 +15,12 @@ type Props = {
   selectedIds: number[];
   onSelect: (primary: number | null, ids: number[]) => void;
   hotkeys?: Record<string, string>;
+  onExport?: (what: ExportTarget) => void;
 };
 
 // Root rows first, then a header and its rows per group. Click loads a replay; Ctrl/Shift build
 // a selection; dragging moves replays between groups (spec §6, §7).
-export function EventList({ client, events, selectedId, selectedIds, onSelect, hotkeys = {} }: Props) {
+export function EventList({ client, events, selectedId, selectedIds, onSelect, hotkeys = {}, onExport }: Props) {
   const menu = useContextMenu();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string | null>(null);
@@ -94,6 +96,7 @@ export function EventList({ client, events, selectedId, selectedIds, onSelect, h
             },
           },
           { label: 'Remove camera switches', onSelect: () => void client.send({ cmd: 'event.clearCuts', id: e.id }) },
+          ...(onExport ? [{ label: 'Export…', onSelect: () => onExport({ id: e.id, name: e.name || 'Replay' }) }] : []),
           'separator',
           { label: `Delete replay ${e.id}`, danger: true, onSelect: () => void client.send({ cmd: 'event.delete', id: e.id }) },
         ])
@@ -216,6 +219,19 @@ export function EventList({ client, events, selectedId, selectedIds, onSelect, h
         >
           Play ▸
         </button>
+        {onExport && (
+          <button
+            className="mini play"
+            aria-label={`Export ${isRoot ? 'Replays' : g.name}`}
+            title={`Export ${isRoot ? 'Replays' : g.name} as an MP4`}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onExport({ listId: g.id, name: isRoot ? 'Replays' : g.name });
+            }}
+          >
+            Export
+          </button>
+        )}
       </div>
     );
   };
@@ -259,18 +275,25 @@ export function EventList({ client, events, selectedId, selectedIds, onSelect, h
           </p>
         )}
       </div>
-      <button
-        className="btn go"
-        disabled={!canPlay}
-        title={playingSelection ? 'Plays the selected replays one after another, in list order.' : 'Plays every replay in this group one after another, like an end-of-game highlight reel.'}
-        onClick={() =>
-          playingSelection
-            ? void client.send({ cmd: 'highlight.play', ids: inOrder(selected) })
-            : void client.send({ cmd: 'highlight.play', listId: primaryGroup })
-        }
-      >
-        {label}
-      </button>
+      <div className="ev-actions">
+        <button
+          className="btn go"
+          disabled={!canPlay}
+          title={playingSelection ? 'Plays the selected replays one after another, in list order.' : 'Plays every replay in this group one after another, like an end-of-game highlight reel.'}
+          onClick={() =>
+            playingSelection
+              ? void client.send({ cmd: 'highlight.play', ids: inOrder(selected) })
+              : void client.send({ cmd: 'highlight.play', listId: primaryGroup })
+          }
+        >
+          {label}
+        </button>
+        {playingSelection && onExport && (
+          <button className="btn" onClick={() => onExport({ ids: inOrder(selected), name: 'Selection' })}>
+            Export selection
+          </button>
+        )}
+      </div>
     </aside>
   );
 }

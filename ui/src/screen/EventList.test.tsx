@@ -153,3 +153,13 @@ test("dropping a selected row on another group's row moves the selection", () =>
   fireEvent.drop(screen.getByRole('button', { name: /^2 · / }), { dataTransfer });
   expect(c.send).toHaveBeenCalledWith({ cmd: 'event.move', ids: [1, 3], listId: 'g1', beforeId: 2 });
 });
+
+test("a group's Export opens the panel for that group", () => {
+  const c = client();
+  const onExport = vi.fn();
+  const s = store({ lists: [{ id: 'g1', name: 'Game 1', order: [2] }], events: [ev(2, 'g1')] });
+  render(<EventList client={c} events={s} selectedId={null} selectedIds={[]} onSelect={() => {}} onExport={onExport} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Export Game 1' }));
+  expect(onExport).toHaveBeenCalledWith({ listId: 'g1', name: 'Game 1' });
+  expect(c.send).not.toHaveBeenCalledWith(expect.objectContaining({ cmd: 'list.select' }));
+});

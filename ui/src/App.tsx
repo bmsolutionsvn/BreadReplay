@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import type { Client, Command } from './api/client';
 import { ContextMenuHost } from './ContextMenu';
+import { ExportPanel, type ExportChoice, type ExportTarget } from './dialogs/ExportPanel';
 import { hotkeyMap, keyToCommand } from './hotkeys';
 import { Settings, defaultSettings } from './dialogs/Settings';
 import { AngleRow } from './screen/AngleRow';
@@ -36,6 +37,13 @@ export function App({ client }: { client: Client }) {
   const [settings, setSettings] = useState(false);
   const [zoomMode, setZoomMode] = useState(false);
   const [savedHotkeys, setSavedHotkeys] = useState<Record<string, string>>({});
+  const [exportWhat, setExportWhat] = useState<ExportTarget | null>(null);
+  const [exportLast, setExportLast] = useState<ExportChoice | null>(null);
+  const lastExport: ExportChoice = exportLast ?? {
+    codec: status?.exportCodec ?? 'h264',
+    quality: status?.exportQuality ?? 'high',
+    mbps: status?.exportMbps ?? 10,
+  };
   const hotkeys = status?.hotkeys ?? savedHotkeys;
 
   useEffect(() => () => clearTimeout(stampTimer.current), []);
@@ -207,10 +215,21 @@ export function App({ client }: { client: Client }) {
             setSelectedIds(ids);
           }}
           hotkeys={hotkeys}
+          onExport={setExportWhat}
         />
       </div>
 
-      <StatusBar status={status} />
+      <StatusBar status={status} client={client} />
+      {exportWhat && (
+        <ExportPanel
+          client={client}
+          what={exportWhat}
+          codecs={status?.exportCodecs ?? ['h264']}
+          last={lastExport}
+          onClose={() => setExportWhat(null)}
+          onStarted={setExportLast}
+        />
+      )}
       {settings && (
         <Settings
           client={client}

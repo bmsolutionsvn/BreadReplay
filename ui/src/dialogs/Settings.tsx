@@ -25,6 +25,10 @@ export const defaultSettings: ShowSettings = {
   slatePath: '',
   hotkeys: {},
   recordingFolder: '',
+  exportFolder: '',
+  exportCodec: 'h264',
+  exportQuality: 'high',
+  exportMbps: 10,
 };
 
 type Tab = 'inputs' | 'outputs' | 'recording' | 'playback' | 'hotkeys';
@@ -40,6 +44,7 @@ const TABS: Array<[Tab, string]> = [
 const DIFF_KEYS: Array<keyof ShowSettings> = [
   'rate', 'outW', 'outH', 'quality', 'lastNSeconds', 'preRollS', 'postRollS', 'defaultSpeed',
   'transition', 'fadeS', 'lowSpaceMinutes', 'endAction', 'slatePath', 'recordingFolder',
+  'exportFolder',
 ];
 
 type Props = {

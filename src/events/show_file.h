@@ -25,6 +25,10 @@ struct ShowSettings {
   std::string endAction = "hold", slatePath;
   std::map<std::string, std::string> hotkeys;
   std::string recordingFolder;
+  std::string exportFolder;
+  std::string exportCodec = "h264";
+  std::string exportQuality = "high";
+  double exportMbps = 10.0;
 };
 
 struct ShowInput {

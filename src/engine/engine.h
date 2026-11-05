@@ -17,6 +17,7 @@
 #include "engine/command_router.h"
 #include "events/edit_history.h"
 #include "events/show_file.h"
+#include "export/export_queue.h"
 #include "io/input.h"
 #include "io/output.h"
 #include "play/frame_source.h"
@@ -97,6 +98,7 @@ class Engine {
 
   // For tests and the current-list highlight.
   OutputPlayer* outputPlayer() { return outputPlayer_.get(); }
+  ExportQueue* exportQueue() { return exportQueue_.get(); }
   const InputStore* store(const std::string& id) const;
   RecorderStats recorderStats(const std::string& id);
   const FrameSource* frameSource() const { return source_.get(); }
@@ -126,6 +128,8 @@ class Engine {
   void buildInputs();
   void buildOutputs();
   void rebuildFrameSource();
+  void stopExportQueue();
+  void rebuildExportQueue();
   void startPreviewThread();
   void previewLoop();
   void retentionLoop();
@@ -161,6 +165,7 @@ class Engine {
   std::unique_ptr<OutputPlayer> outputPlayer_;
   std::unique_ptr<Player> previewPlayer_;
   std::unique_ptr<Player> outputPlayerState_;
+  std::unique_ptr<ExportQueue> exportQueue_;
 
   std::unique_ptr<bc::PreviewEncoder> previewEncoder_;
   std::unique_ptr<bc::PreviewEncoder> outputEncoder_;

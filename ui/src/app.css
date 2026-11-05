@@ -122,6 +122,7 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .mini:hover { background: var(--bm-surface-hover); color: var(--bm-text); }
 .mini.danger { color: var(--bm-danger); }
 .mini.play { padding: 0 6px; }
+.ev-actions { display: grid; gap: 4px; }
 .ev-list { overflow: auto; display: grid; align-content: start; gap: 2px; }
 .ev { display: flex; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 3px; text-align: left; font: 12px var(--mono); color: var(--bm-text-muted); }
 .ev:hover { background: var(--bm-surface-hover); }
@@ -207,6 +208,8 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 .status .dot.connecting { background: var(--bm-signal-connecting); }
 .status .alerts { margin-left: auto; display: flex; gap: 6px; min-width: 0; overflow: hidden; }
 .status .block { padding: 2px 8px; font: 11px var(--bm-font-sans); white-space: nowrap; }
+.status .exports { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.status .exports .err { color: var(--bm-danger); }
 .block { display: flex; gap: 8px; padding: 6px 10px; border-left: 2px solid var(--bm-danger); background: var(--bm-danger-wash); border-radius: 2px; }
 .block.warning { border-color: var(--bm-warning); background: var(--bm-warning-wash); }
 
@@ -248,6 +251,11 @@ h5 { font-size: 10.5px; color: var(--bm-text-muted); text-transform: uppercase; 
 /* key hints */
 kbd { display: inline-flex; align-items: center; height: 17px; min-width: 17px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--bm-border-strong); background: rgba(0, 0, 0, .35); font: 500 10.5px var(--mono); color: var(--bm-text-muted); justify-content: center; }
 .k.go kbd, .k.hot kbd { border-color: rgba(255, 255, 255, .35); color: #fff; }
+
+/* export popover */
+.export-pop { position: fixed; right: 24px; bottom: 46px; width: 300px; display: grid; gap: 8px; padding: 12px; background: var(--bm-surface-raised); border: 1px solid var(--bm-border-strong); border-radius: 6px; box-shadow: var(--bm-shadow-overlay); z-index: 45; }
+.export-pop .field.x { grid-template-columns: 90px minmax(0, 1fr); }
+.export-pop .row-end { display: flex; justify-content: flex-end; gap: 6px; }
 
 /* context menu */
 .ctx { position: fixed; z-index: 50; min-width: 200px; padding: 4px; background: var(--bm-surface-raised); border: 1px solid var(--bm-border-strong); border-radius: 6px; box-shadow: var(--bm-shadow-overlay); display: grid; animation: ctx-in 120ms var(--ease); }

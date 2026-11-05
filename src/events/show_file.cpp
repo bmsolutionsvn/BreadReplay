@@ -26,6 +26,10 @@ nlohmann::json settingsToJson(const ShowSettings& s) {
   j["slatePath"] = s.slatePath;
   j["hotkeys"] = s.hotkeys;
   j["recordingFolder"] = s.recordingFolder;
+  j["exportFolder"] = s.exportFolder;
+  j["exportCodec"] = s.exportCodec;
+  j["exportQuality"] = s.exportQuality;
+  j["exportMbps"] = s.exportMbps;
   return j;
 }
 
@@ -54,6 +58,10 @@ ShowSettings settingsFromJson(const nlohmann::json& j) {
   s.slatePath = j.value("slatePath", std::string{});
   s.hotkeys = j.value("hotkeys", std::map<std::string, std::string>{});
   s.recordingFolder = j.value("recordingFolder", std::string{});
+  s.exportFolder = j.value("exportFolder", std::string{});
+  s.exportCodec = j.value("exportCodec", std::string("h264"));
+  s.exportQuality = j.value("exportQuality", std::string("high"));
+  s.exportMbps = j.value("exportMbps", 10.0);
   return s;
 }
 

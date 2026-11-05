@@ -56,6 +56,17 @@ export function RecordingTab({ client, value, onChange, limitHours, onLimitHours
         <span className="hint">Use a fast drive that is only for recording (an NVMe SSD).</span>
       </label>
       <label className="field">
+        <span>Export folder</span>
+        <input
+          className="ctl mono"
+          aria-label="Export folder"
+          value={value.exportFolder}
+          placeholder="The show's Exports folder"
+          onChange={(e) => onChange({ exportFolder: e.target.value })}
+        />
+        <span className="hint">Where exported MP4s go. Empty = an Exports folder beside the show.</span>
+      </label>
+      <label className="field">
         <span>Keep the last (hours)</span>
         <input
           className="ctl mono"

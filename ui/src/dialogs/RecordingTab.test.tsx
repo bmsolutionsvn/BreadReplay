@@ -12,3 +12,11 @@ test('RecordingTab: pre-flight shows the measured disk', async () => {
   expect(await screen.findByText(/room for about 412 minutes/)).toBeInTheDocument();
   expect(client.send).toHaveBeenCalledWith({ cmd: 'record.preflight' });
 });
+
+test('RecordingTab: the export folder is a setting', () => {
+  const onChange = vi.fn();
+  const client = { send: vi.fn().mockResolvedValue({ ok: true }) };
+  render(<RecordingTab client={client} value={defaultSettings} onChange={onChange} limitHours="" onLimitHours={() => {}} limitError="" />);
+  fireEvent.change(screen.getByLabelText('Export folder'), { target: { value: 'D:/Exports' } });
+  expect(onChange).toHaveBeenCalledWith({ exportFolder: 'D:/Exports' });
+});
